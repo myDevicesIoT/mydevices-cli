@@ -10,6 +10,7 @@ import { createConfigCommands } from './commands/config.js';
 import { createTemplatesCommands } from './commands/templates.js';
 import { createCodecsCommands } from './commands/codecs.js';
 import { createRegistryCommands } from './commands/registry.js';
+import { createGatewaysCommands } from './commands/gateways.js';
 
 const program = new Command();
 
@@ -29,6 +30,7 @@ program.addCommand(createConfigCommands());
 program.addCommand(createTemplatesCommands());
 program.addCommand(createCodecsCommands());
 program.addCommand(createRegistryCommands());
+program.addCommand(createGatewaysCommands());
 
 // Parse and execute
 program.parse();
