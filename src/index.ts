@@ -11,6 +11,7 @@ import { createTemplatesCommands } from './commands/templates.js';
 import { createCodecsCommands } from './commands/codecs.js';
 import { createRegistryCommands } from './commands/registry.js';
 import { createGatewaysCommands } from './commands/gateways.js';
+import { createCompletionCommands } from './commands/completion.js';
 
 const program = new Command();
 
@@ -31,6 +32,7 @@ program.addCommand(createTemplatesCommands());
 program.addCommand(createCodecsCommands());
 program.addCommand(createRegistryCommands());
 program.addCommand(createGatewaysCommands());
+program.addCommand(createCompletionCommands());
 
 // Parse and execute
 program.parse();
