@@ -11,11 +11,16 @@ import type {
   CodecListResponse,
   DecodeRequest,
   DecodeResponse,
+  DecodeResponseSensor,
   EncodeRequest,
   EncodeResponse,
+  DeviceTemplate,
+  TemplateChannel,
+  ApiResponse,
   GlobalOptions,
   ListOptions,
 } from '../types/index.js';
+import chalk from 'chalk';
 
 /**
  * Get the base path for codecs API
@@ -23,6 +28,84 @@ import type {
 function getCodecsPath(): string {
   const clientId = getConfig('clientId');
   return `/v1.1/organizations/${clientId}/applications/${clientId}/codecs`;
+}
+
+/**
+ * Get the base path for templates API
+ */
+function getTemplatesPath(): string {
+  const clientId = getConfig('clientId');
+  return `/v1.1/organizations/${clientId}/applications/${clientId}/things/types`;
+}
+
+/**
+ * Validate decoded sensors against template capabilities
+ */
+interface ValidationResult {
+  sensor: DecodeResponseSensor;
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+async function validateAgainstTemplate(
+  sensors: DecodeResponseSensor[],
+  templateId: string
+): Promise<{ results: ValidationResult[]; template: DeviceTemplate }> {
+  // Fetch the template
+  const template = await apiGet<DeviceTemplate>(`${getTemplatesPath()}/${templateId}`);
+  const channels = template.channels || [];
+
+  const results: ValidationResult[] = sensors.map((sensor) => {
+    const errors: string[] = [];
+    const warnings: string[] = [];
+
+    // Find matching channel in template
+    const matchingChannel = channels.find(
+      (ch: TemplateChannel) => String(ch.channel) === String(sensor.channel)
+    );
+
+    if (!matchingChannel) {
+      errors.push(`Channel ${sensor.channel} not found in template`);
+      return { sensor, valid: false, errors, warnings };
+    }
+
+    // Check if unit is valid for this channel
+    if (matchingChannel.data?.units && matchingChannel.data.units.length > 0) {
+      const validUnits = matchingChannel.data.units.map((u) => u.payload);
+      if (!validUnits.includes(sensor.unit)) {
+        errors.push(
+          `Invalid unit '${sensor.unit}' for channel ${sensor.channel}. Valid units: ${validUnits.join(', ')}`
+        );
+      }
+    }
+
+    // Check value type
+    if (sensor.value === null || sensor.value === undefined) {
+      warnings.push(`Channel ${sensor.channel} has null/undefined value`);
+    }
+
+    return {
+      sensor,
+      valid: errors.length === 0,
+      errors,
+      warnings,
+    };
+  });
+
+  // Check for missing channels (channels in template but not in decoded output)
+  const decodedChannels = sensors.map((s) => String(s.channel));
+  const missingChannels = channels.filter(
+    (ch: TemplateChannel) => !decodedChannels.includes(String(ch.channel))
+  );
+
+  // Add missing channels as warnings (not errors, since partial decoding might be valid)
+  if (missingChannels.length > 0) {
+    const missingInfo = missingChannels.map((ch: TemplateChannel) => `${ch.channel} (${ch.name})`);
+    // We'll report this separately, not as part of sensor results
+  }
+
+  return { results, template };
 }
 
 export function createCodecsCommands(): Command {
@@ -309,6 +392,7 @@ export function createCodecsCommands(): Command {
     .option('-f, --format <format>', 'Data format (hex, base64, text, json)', 'hex')
     .option('--fport <number>', 'LoRaWAN fport number')
     .option('--hardware-id <id>', 'Device hardware ID')
+    .option('--validate-template <templateId>', 'Validate output against a template')
     .option('--debug', 'Include console output')
     .option('--json', 'Output as JSON')
     .action(async (id: string, options: GlobalOptions & {
@@ -316,6 +400,7 @@ export function createCodecsCommands(): Command {
       format: string;
       fport?: string;
       hardwareId?: string;
+      validateTemplate?: string;
       debug?: boolean;
     }) => {
       const spinner = ora('Decoding payload...').start();
@@ -334,10 +419,41 @@ export function createCodecsCommands(): Command {
           `${getCodecsPath()}/${id}/decode`,
           body as unknown as Record<string, unknown>
         );
+
+        // Validate against template if requested
+        let validationResults: ValidationResult[] | null = null;
+        let validationTemplate: DeviceTemplate | null = null;
+        let missingChannels: TemplateChannel[] = [];
+
+        if (options.validateTemplate && response.sensors && response.sensors.length > 0) {
+          spinner.text = 'Validating against template...';
+          const validation = await validateAgainstTemplate(response.sensors, options.validateTemplate);
+          validationResults = validation.results;
+          validationTemplate = validation.template;
+
+          // Find missing channels
+          const decodedChannels = response.sensors.map((s) => String(s.channel));
+          missingChannels = (validationTemplate.channels || []).filter(
+            (ch: TemplateChannel) => !decodedChannels.includes(String(ch.channel))
+          );
+        }
+
         spinner.stop();
 
         if (options.json) {
-          output(response, { json: true });
+          const jsonOutput: Record<string, unknown> = { ...response };
+          if (validationResults) {
+            jsonOutput.validation = {
+              results: validationResults,
+              templateId: options.validateTemplate,
+              templateName: validationTemplate?.name,
+              missingChannels: missingChannels.map((ch) => ({
+                channel: ch.channel,
+                name: ch.name,
+              })),
+            };
+          }
+          output(jsonOutput, { json: true });
         } else {
           if (response.error) {
             error(`Decode error: ${response.error}`);
@@ -362,6 +478,52 @@ export function createCodecsCommands(): Command {
                 s.name || '-',
               ])
             );
+
+            // Show validation results
+            if (validationResults && validationTemplate) {
+              console.log('');
+              header(`Validation Against: ${validationTemplate.name}`);
+
+              const allValid = validationResults.every((r) => r.valid);
+              const hasWarnings = validationResults.some((r) => r.warnings.length > 0);
+
+              if (allValid && !hasWarnings && missingChannels.length === 0) {
+                console.log(chalk.green('✓ All sensors validated successfully'));
+              } else {
+                // Show errors
+                validationResults.forEach((result) => {
+                  if (!result.valid) {
+                    console.log(chalk.red(`✗ Channel ${result.sensor.channel}:`));
+                    result.errors.forEach((err) => console.log(chalk.red(`    ${err}`)));
+                  }
+                });
+
+                // Show warnings
+                validationResults.forEach((result) => {
+                  if (result.warnings.length > 0) {
+                    console.log(chalk.yellow(`⚠ Channel ${result.sensor.channel}:`));
+                    result.warnings.forEach((warn) => console.log(chalk.yellow(`    ${warn}`)));
+                  }
+                });
+
+                // Show missing channels
+                if (missingChannels.length > 0) {
+                  console.log(chalk.yellow('\n⚠ Missing channels (not decoded):'));
+                  missingChannels.forEach((ch) => {
+                    console.log(chalk.yellow(`    - ${ch.channel}: ${ch.name}`));
+                  });
+                }
+
+                // Summary
+                const validCount = validationResults.filter((r) => r.valid).length;
+                console.log('');
+                console.log(`Validation: ${validCount}/${validationResults.length} sensors valid`);
+
+                if (!allValid) {
+                  process.exit(1);
+                }
+              }
+            }
           } else {
             console.log('No sensor data decoded');
           }

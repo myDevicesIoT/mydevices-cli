@@ -342,9 +342,25 @@ mydevices codecs decode <codec-id> -d "00fa320d48" -f hex --hardware-id "0011223
 # With debug output (shows console.log)
 mydevices codecs decode <codec-id> -d "00fa320d48" -f hex --debug
 
+# Validate output against a template
+mydevices codecs decode <codec-id> -d "00fa320d48" -f hex --validate-template <template-id>
+
 # JSON output
 mydevices codecs decode <codec-id> -d "00fa320d48" -f hex --json
 ```
+
+### Validating Decoder Output
+
+Use `--validate-template` to verify that decoder output matches a template's capabilities:
+
+```bash
+mydevices codecs decode my-sensor-codec -d "00fa320d48" -f hex --validate-template abc-123-def
+```
+
+Validation checks:
+- Each decoded channel exists in the template
+- Each unit is valid for the channel's datatype
+- Reports missing channels (in template but not decoded)
 
 **Output:**
 ```

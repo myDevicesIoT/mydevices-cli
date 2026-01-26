@@ -283,6 +283,24 @@ mydevices templates assign-codec abc-123-def lorawan.acme.sensor
 
 This command fetches the current template and updates it with the specified codec ID.
 
+### Scaffold Decoder from Template
+
+Generate a decoder.js skeleton based on template capabilities:
+
+```bash
+# Output to stdout
+mydevices templates scaffold-decoder <template-id>
+
+# Output to file
+mydevices templates scaffold-decoder <template-id> --output ./decoder.js
+```
+
+The generated decoder includes:
+- All channels with correct channel numbers, types, and units
+- Placeholder parsing logic for each sensor
+- Comments explaining the Decoder API
+- Try/catch error handling
+
 ## Capabilities Commands
 
 ### List Capabilities

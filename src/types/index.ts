@@ -347,18 +347,20 @@ export interface DecodeRequest {
   session?: Record<string, unknown>;
 }
 
+export interface DecodeResponseSensor {
+  channel: number;
+  type: string;
+  unit: string;
+  value: unknown;
+  name?: string;
+  timestamp?: number;
+  hardware_id?: string;
+}
+
 export interface DecodeResponse {
   console?: string;
   error?: string;
-  sensors?: Array<{
-    channel: number;
-    type: string;
-    unit: string;
-    value: unknown;
-    name?: string;
-    timestamp?: number;
-    hardware_id?: string;
-  }>;
+  sensors?: DecodeResponseSensor[];
   options?: Record<string, unknown>;
   session?: Record<string, unknown>;
 }
