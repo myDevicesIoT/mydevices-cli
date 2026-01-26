@@ -131,6 +131,113 @@ export interface Rule {
   updated_at?: string;
 }
 
+// Device Template types
+export interface DeviceTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  category?: string;
+  subcategory?: string;
+  parent_constraint?: string;
+  codec?: string;
+  child_constraint?: string;
+  model?: string;
+  version?: string;
+  manufacturer?: string;
+  transport_protocol?: string;
+  protocol_version?: string;
+  certifications?: string;
+  ip_rating?: string;
+  keywords?: string;
+  data_type?: string;
+  proxy_handler?: string;
+  application_id?: string;
+  organization_id?: string;
+  is_public?: boolean;
+  is_example?: boolean;
+  is_approved?: boolean;
+  status?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+// Codec types
+export interface CodecFile {
+  name: string;
+  source: string;
+}
+
+export interface Codec {
+  id: string;
+  name: string;
+  organization?: string;
+  application?: string;
+  official?: boolean;
+  public?: boolean;
+  opensource?: boolean;
+  timeout?: number;
+  class?: string;
+  modules?: string[];
+  files?: CodecFile[];
+  owner?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CodecListResponse {
+  codecs: Codec[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface DecodeRequest {
+  data: string;
+  format: 'hex' | 'base64' | 'text' | 'json';
+  fport?: number;
+  timestamp?: number;
+  hardware_id?: string;
+  options?: Record<string, unknown>;
+  session?: Record<string, unknown>;
+}
+
+export interface DecodeResponse {
+  console?: string;
+  error?: string;
+  sensors?: Array<{
+    channel: number;
+    type: string;
+    unit: string;
+    value: unknown;
+    name?: string;
+    timestamp?: number;
+    hardware_id?: string;
+  }>;
+  options?: Record<string, unknown>;
+  session?: Record<string, unknown>;
+}
+
+export interface EncodeRequest {
+  channel: number;
+  value: unknown;
+  options?: Record<string, unknown>;
+  session?: Record<string, unknown>;
+}
+
+export interface EncodeResponse {
+  console?: string;
+  error?: string;
+  payload?: {
+    format: string;
+    data?: string;
+    text?: string;
+    json?: string;
+    fport?: number;
+  };
+  options?: Record<string, unknown>;
+  session?: Record<string, unknown>;
+}
+
 // CLI options
 export interface GlobalOptions {
   json?: boolean;

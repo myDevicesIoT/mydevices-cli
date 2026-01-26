@@ -7,6 +7,8 @@ import { createUsersCommands } from './commands/users.js';
 import { createDevicesCommands } from './commands/devices.js';
 import { createRulesCommands } from './commands/rules.js';
 import { createConfigCommands } from './commands/config.js';
+import { createTemplatesCommands } from './commands/templates.js';
+import { createCodecsCommands } from './commands/codecs.js';
 
 const program = new Command();
 
@@ -23,6 +25,8 @@ program.addCommand(createUsersCommands());
 program.addCommand(createDevicesCommands());
 program.addCommand(createRulesCommands());
 program.addCommand(createConfigCommands());
+program.addCommand(createTemplatesCommands());
+program.addCommand(createCodecsCommands());
 
 // Parse and execute
 program.parse();

@@ -4,6 +4,13 @@ import { apiGet, apiPost, apiPut, apiDelete } from '../lib/api.js';
 import { output, success, error, header, detail, outputTable } from '../lib/output.js';
 import type { Device, DeviceReading, ApiResponse, GlobalOptions, ListOptions } from '../types/index.js';
 
+/**
+ * Check if a string is a 16 hex character hardware ID (EUI format)
+ */
+function isHardwareId(value: string): boolean {
+  return /^[0-9a-fA-F]{16}$/.test(value);
+}
+
 export function createDevicesCommands(): Command {
   const devices = new Command('devices').description('Manage devices (things)');
 
@@ -52,7 +59,7 @@ export function createDevicesCommands(): Command {
             d.thing_name,
             d.thing_type || d.sensor_type,
             d.hardware_id,
-            d.status === 0 ? 'active' : 'inactive',
+            d.status === 0 ? 'active' : 'deactivated',
           ],
           footer: `Total: ${response.count || devices.length} devices`,
         });
@@ -65,13 +72,23 @@ export function createDevicesCommands(): Command {
 
   devices
     .command('get')
-    .description('Get a device by ID')
-    .argument('<id>', 'Device ID')
+    .description('Get a device by ID or hardware ID')
+    .argument('<id>', 'Device ID or Hardware ID (16 hex chars auto-detected)')
+    .option('--hardware-id', 'Treat the ID as a hardware ID (EUI)')
     .option('--json', 'Output as JSON')
-    .action(async (id: string, options: GlobalOptions) => {
+    .action(async (id: string, options: GlobalOptions & { hardwareId?: boolean }) => {
       const spinner = ora('Fetching device...').start();
       try {
-        const device = await apiGet<Device>(`/v1.0/admin/things/${id}`);
+        let deviceId = id;
+
+        // If --hardware-id flag is set or the ID looks like a hardware ID (16 hex chars)
+        if (options.hardwareId || isHardwareId(id)) {
+          // First lookup the device by hardware ID to get the actual device ID
+          const lookup = await apiGet<Device>(`/v1.0/admin/things/${id}/status`);
+          deviceId = lookup.id;
+        }
+
+        const device = await apiGet<Device>(`/v1.0/admin/things/${deviceId}`);
         spinner.stop();
 
         if (options.json) {
@@ -85,7 +102,7 @@ export function createDevicesCommands(): Command {
           detail('Sensor Type', device.sensor_type);
           detail('Sensor Use', device.sensor_use);
           detail('Location ID', device.location_id);
-          detail('Status', device.status === 0 ? 'active' : 'inactive');
+          detail('Status', device.status === 0 ? 'active' : 'deactivated');
           detail('Enabled', device.enabled);
           detail('Created', device.created_at);
           detail('Updated', device.updated_at);
@@ -318,7 +335,7 @@ export function createDevicesCommands(): Command {
           detail('ID', device.id);
           detail('Name', device.thing_name);
           detail('Hardware ID', device.hardware_id);
-          detail('Status', device.status === 0 ? 'active' : 'inactive');
+          detail('Status', device.status === 0 ? 'active' : 'deactivated');
           detail('Location ID', device.location_id);
         }
       } catch (err) {
