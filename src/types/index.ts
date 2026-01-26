@@ -132,6 +132,148 @@ export interface Rule {
 }
 
 // Device Template types
+
+// Meta key-value pairs for template metadata
+export interface TemplateMeta {
+  id?: number;
+  key: string;
+  value: string;
+  device_type_id?: string;
+}
+
+// Icon definition for channels
+export interface ChannelIcon {
+  id?: string;
+  name: string;
+  type: string;
+  color?: string;
+  value: string;
+}
+
+// Chart configuration
+export interface ChannelChart {
+  name: string;
+  label: string;
+}
+
+// Unit definition for channels
+export interface ChannelUnit {
+  id?: number;
+  name: string;
+  label: string;
+  payload: string;
+  display: string;
+  decimals?: number;
+  default?: boolean;
+  enabled?: boolean;
+  std?: boolean;
+  constant?: string;
+  data_types_id?: number;
+  eq?: Array<{ eq: string; to: string }>;
+}
+
+// Status definition for status-type channels
+export interface ChannelStatus {
+  id?: number;
+  name: string;
+  label: string;
+  value: string;
+  enabled?: boolean;
+  data_types_id?: number;
+}
+
+// Rule template for alerts
+export interface ChannelRuleTemplate {
+  id?: string;
+  type: string;
+  label: string;
+  order?: number;
+  value?: string;
+  enabled?: boolean;
+  channel_id?: number;
+  notification_template?: string;
+}
+
+// Channel data configuration
+export interface ChannelData {
+  icon?: ChannelIcon;
+  chart?: ChannelChart;
+  units?: ChannelUnit[];
+  widget?: string;
+  commands?: unknown[];
+  statuses?: ChannelStatus[];
+  template?: string;
+  properties?: unknown[];
+  rule_templates?: ChannelRuleTemplate[];
+}
+
+// Channel (capability) definition
+export interface TemplateChannel {
+  id?: number;
+  name: string;
+  channel: string;
+  data_types_id?: number;
+  datatype?: string;
+  ipso?: string | null;
+  order?: number;
+  device_type_id?: string;
+  data?: ChannelData;
+}
+
+// Rule trigger condition
+export interface RuleTriggerCondition {
+  value: string;
+  operator: string;
+}
+
+// Rule trigger
+export interface RuleTrigger {
+  unit?: string;
+  channel: string;
+  conditions: RuleTriggerCondition[];
+}
+
+// Device use rule settings
+export interface DeviceUseRule {
+  id?: string;
+  name: string;
+  type: string;
+  enabled?: boolean;
+  channel_id?: number;
+  rule_type?: string;
+  triggers?: RuleTrigger[];
+  delay?: {
+    time: number;
+    count: number;
+  };
+  actions?: unknown[];
+  overrides?: unknown[];
+  notifications?: unknown[];
+  report_id?: string | null;
+  set_channel?: boolean;
+}
+
+// Device use configuration
+export interface DeviceUse {
+  id?: number;
+  name: string;
+  default?: boolean;
+  alert_min?: number | null;
+  alert_max?: number | null;
+  alert_readings?: number | null;
+  device_type_id?: string;
+  settings?: {
+    rules: DeviceUseRule[];
+  };
+}
+
+// Resource link for meta
+export interface ResourceLink {
+  order: number;
+  name: string;
+  url: string;
+}
+
 export interface DeviceTemplate {
   id: string;
   name: string;
@@ -159,6 +301,10 @@ export interface DeviceTemplate {
   status?: number;
   created_at?: string;
   updated_at?: string;
+  // Extended properties for full template
+  meta?: TemplateMeta[];
+  channels?: TemplateChannel[];
+  device_use?: DeviceUse[];
 }
 
 // Codec types
