@@ -9,6 +9,7 @@ import { createRulesCommands } from './commands/rules.js';
 import { createConfigCommands } from './commands/config.js';
 import { createTemplatesCommands } from './commands/templates.js';
 import { createCodecsCommands } from './commands/codecs.js';
+import { createRegistryCommands } from './commands/registry.js';
 
 const program = new Command();
 
@@ -27,6 +28,7 @@ program.addCommand(createRulesCommands());
 program.addCommand(createConfigCommands());
 program.addCommand(createTemplatesCommands());
 program.addCommand(createCodecsCommands());
+program.addCommand(createRegistryCommands());
 
 // Parse and execute
 program.parse();
