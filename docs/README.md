@@ -7,6 +7,7 @@
 | [Device Templates](./device-templates.md) | Creating device integrations with templates and capabilities |
 | [Codecs](./codecs.md) | Writing and testing payload decoders/encoders |
 | [API Reference](./api-reference.md) | Complete API endpoints reference |
+| [LLM Integration](./llm-integration.md) | MCP server setup and command schema for AI assistants |
 
 ## Quick Start
 

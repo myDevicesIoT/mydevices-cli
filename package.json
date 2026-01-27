@@ -11,7 +11,8 @@
     "start": "bun run src/index.ts",
     "build": "bun build src/index.ts --compile --outfile dist/mydevices",
     "dev": "bun --watch src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "mcp": "bun run src/mcp-server.ts"
   },
   "keywords": [
     "mydevices",
