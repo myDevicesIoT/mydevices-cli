@@ -81,9 +81,16 @@ detect_arch() {
 # Get latest version from GitHub
 get_latest_version() {
     local latest
-    latest=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+    # Try releases first
+    latest=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+
+    # Fall back to latest tag if no releases
     if [ -z "$latest" ]; then
-        error "Failed to fetch latest version"
+        latest=$(curl -fsSL "https://api.github.com/repos/${REPO}/tags" 2>/dev/null | grep '"name"' | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+    fi
+
+    if [ -z "$latest" ]; then
+        error "Failed to fetch latest version. Check that releases or tags exist at https://github.com/${REPO}"
     fi
     echo "$latest"
 }
