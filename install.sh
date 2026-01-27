@@ -3,7 +3,7 @@
 # myDevices CLI Installer
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/mydevices/mydevices-cli/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/myDevicesIoT/mydevices-cli/main/install.sh | bash
 #
 # Options:
 #   VERSION=v1.1.0 curl -fsSL ... | bash    # Install specific version
@@ -13,7 +13,7 @@
 set -e
 
 # Configuration
-REPO="mydevices/mydevices-cli"
+REPO="myDevicesIoT/mydevices-cli"
 BINARY_NAME="mydevices"
 DEFAULT_INSTALL_DIR="/usr/local/bin"
 
