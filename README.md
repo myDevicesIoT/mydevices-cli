@@ -4,7 +4,24 @@ Command-line tool for managing your myDevices IoT platform.
 
 ## Installation
 
-### Download Binary (Recommended)
+### Quick Install (Recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mydevices/mydevices-cli/main/install.sh | bash
+```
+
+This automatically detects your platform and installs the latest version.
+
+**Options:**
+```bash
+# Install specific version
+VERSION=v1.1.0 curl -fsSL https://raw.githubusercontent.com/mydevices/mydevices-cli/main/install.sh | bash
+
+# Install to custom directory
+INSTALL_DIR=~/.local/bin curl -fsSL https://raw.githubusercontent.com/mydevices/mydevices-cli/main/install.sh | bash
+```
+
+### Download Binary
 
 Download the latest release for your platform from [GitHub Releases](https://github.com/myDevicesIoT/mydevices-cli/releases):
 
