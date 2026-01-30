@@ -12,6 +12,8 @@ import type {
   ApiResponse,
   GlobalOptions,
   ListOptions,
+  TemplateExportFile,
+  ChannelRuleTemplate,
 } from '../types/index.js';
 
 /**
@@ -940,6 +942,96 @@ export function createTemplatesCommands(): Command {
     });
 
   templates.addCommand(capabilities);
+
+  // --------------------------------------------------------------------------
+  // templates export
+  // --------------------------------------------------------------------------
+  templates
+    .command('export')
+    .description('Export a template with all related data to a JSON file')
+    .argument('<template-id>', 'Template ID to export')
+    .option('-o, --output <file>', 'Output file path (default: stdout)')
+    .action(async (templateId: string, options: { output?: string }) => {
+      const spinner = ora('Fetching template...').start();
+      try {
+        // Fetch the template
+        const template = await apiGet<DeviceTemplate>(`${getTemplatesPath()}/${templateId}`);
+
+        spinner.text = 'Fetching capabilities...';
+        const capabilitiesResponse = await apiGet<ApiResponse<TemplateChannel>>(
+          `${getTemplatesPath()}/${templateId}/channels`,
+          { limit: 100, page: 0 }
+        );
+        const capabilities = capabilitiesResponse.rows || [];
+
+        spinner.stop();
+
+        // Extract alert settings from capabilities
+        const alertSettings: ChannelRuleTemplate[] = [];
+        capabilities.forEach((cap) => {
+          if (cap.data?.rule_templates) {
+            alertSettings.push(...cap.data.rule_templates);
+          }
+        });
+
+        // Build export object
+        const exportData: TemplateExportFile = {
+          version: '1.0',
+          exportedAt: new Date().toISOString(),
+          source: {
+            templateId: template.id,
+            apiUrl: getConfig('apiUrl') as string,
+          },
+          template: {
+            name: template.name,
+            description: template.description,
+            category: template.category,
+            subcategory: template.subcategory,
+            manufacturer: template.manufacturer,
+            model: template.model,
+            codec: template.codec,
+            transport_protocol: template.transport_protocol,
+            certifications: template.certifications,
+            ip_rating: template.ip_rating,
+            is_public: template.is_public,
+          },
+          capabilities: capabilities.map((cap) => ({
+            name: cap.name,
+            channel: cap.channel,
+            data_types_id: cap.data_types_id,
+            datatype: cap.datatype,
+            order: cap.order,
+            data: cap.data,
+          })),
+          deviceUses: (template.device_use || []).map((du) => ({
+            name: du.name,
+            default: du.default,
+            alert_min: du.alert_min,
+            alert_max: du.alert_max,
+            alert_readings: du.alert_readings,
+            settings: du.settings,
+          })),
+          alertSettings,
+          attributes: (template.meta || []).map((m) => ({
+            key: m.key,
+            value: m.value,
+          })),
+        };
+
+        const jsonOutput = JSON.stringify(exportData, null, 2);
+
+        if (options.output) {
+          writeFileSync(options.output, jsonOutput);
+          success(`Template exported to ${options.output}`);
+        } else {
+          console.log(jsonOutput);
+        }
+      } catch (err) {
+        spinner.stop();
+        error(err instanceof Error ? err.message : 'Failed to export template');
+        process.exit(1);
+      }
+    });
 
   return templates;
 }
