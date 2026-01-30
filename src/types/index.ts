@@ -397,3 +397,20 @@ export interface ListOptions extends GlobalOptions {
   limit?: number;
   page?: number;
 }
+
+// Template Export/Import types
+export interface TemplateExportSource {
+  templateId: string;
+  apiUrl: string;
+}
+
+export interface TemplateExportFile {
+  version: string;
+  exportedAt: string;
+  source: TemplateExportSource;
+  template: Omit<DeviceTemplate, 'id' | 'application_id' | 'organization_id' | 'created_at' | 'updated_at'>;
+  capabilities: Omit<TemplateChannel, 'id' | 'device_type_id'>[];
+  deviceUses: Omit<DeviceUse, 'id' | 'device_type_id'>[];
+  alertSettings: ChannelRuleTemplate[];
+  attributes: Omit<TemplateMeta, 'id' | 'device_type_id'>[];
+}
