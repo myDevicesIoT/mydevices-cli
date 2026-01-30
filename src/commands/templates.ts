@@ -1033,5 +1033,110 @@ export function createTemplatesCommands(): Command {
       }
     });
 
+  // --------------------------------------------------------------------------
+  // templates import
+  // --------------------------------------------------------------------------
+  templates
+    .command('import')
+    .description('Import a template from a JSON export file')
+    .argument('<file>', 'Path to the export JSON file')
+    .option('--dry-run', 'Validate file and show what would be created without making changes')
+    .option('--json', 'Output result as JSON')
+    .action(async (file: string, options: { dryRun?: boolean; json?: boolean }) => {
+      // Validate file exists
+      if (!existsSync(file)) {
+        error(`File not found: ${file}`);
+        process.exit(1);
+      }
+
+      // Parse and validate file
+      let exportData: TemplateExportFile;
+      try {
+        exportData = JSON.parse(readFileSync(file, 'utf-8'));
+      } catch (err) {
+        error(`Invalid JSON file: ${err instanceof Error ? err.message : 'Parse error'}`);
+        process.exit(1);
+      }
+
+      // Validate required fields
+      if (!exportData.version) {
+        error('Invalid export file: missing version field');
+        process.exit(1);
+      }
+      if (!exportData.template) {
+        error('Invalid export file: missing template field');
+        process.exit(1);
+      }
+      if (!exportData.template.name) {
+        error('Invalid export file: missing template name');
+        process.exit(1);
+      }
+
+      // Dry run - show what would be created
+      if (options.dryRun) {
+        header('Dry Run - Would create:');
+        detail('Template', exportData.template.name);
+        detail('Capabilities', String(exportData.capabilities?.length || 0));
+        detail('Device Uses', String(exportData.deviceUses?.length || 0));
+        detail('Alert Settings', String(exportData.alertSettings?.length || 0));
+        detail('Attributes', String(exportData.attributes?.length || 0));
+        console.log('\nFile validation: OK');
+        return;
+      }
+
+      const spinner = ora('Creating template...').start();
+      try {
+        // Build template data with meta
+        const templateData: Record<string, unknown> = {
+          ...exportData.template,
+          meta: exportData.attributes || [],
+        };
+
+        // Add device uses if present
+        if (exportData.deviceUses && exportData.deviceUses.length > 0) {
+          templateData.device_use = exportData.deviceUses;
+        }
+
+        // Create the template
+        const newTemplate = await apiPost<DeviceTemplate>(getTemplatesPath(), templateData);
+
+        // Create capabilities
+        const capabilitiesCreated: number[] = [];
+        if (exportData.capabilities && exportData.capabilities.length > 0) {
+          spinner.text = 'Creating capabilities...';
+          for (const cap of exportData.capabilities) {
+            const created = await apiPost<TemplateChannel>(
+              `${getTemplatesPath()}/${newTemplate.id}/channels`,
+              cap
+            );
+            if (created.id) capabilitiesCreated.push(created.id);
+          }
+        }
+
+        spinner.stop();
+
+        if (options.json) {
+          output({
+            success: true,
+            templateId: newTemplate.id,
+            templateName: newTemplate.name,
+            capabilitiesCreated: capabilitiesCreated.length,
+            deviceUsesCreated: exportData.deviceUses?.length || 0,
+            attributesCreated: exportData.attributes?.length || 0,
+          }, { json: true });
+        } else {
+          success(`Template created: "${newTemplate.name}" (id: ${newTemplate.id})`);
+          detail('Capabilities created', String(capabilitiesCreated.length));
+          detail('Device uses created', String(exportData.deviceUses?.length || 0));
+          detail('Attributes created', String(exportData.attributes?.length || 0));
+          console.log('\nTemplate imported successfully.');
+        }
+      } catch (err) {
+        spinner.stop();
+        error(err instanceof Error ? err.message : 'Failed to import template');
+        process.exit(1);
+      }
+    });
+
   return templates;
 }
