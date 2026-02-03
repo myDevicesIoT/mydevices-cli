@@ -108,6 +108,190 @@ async function validateAgainstTemplate(
   return { results, template };
 }
 
+/**
+ * Default decoder.js template
+ */
+function getDefaultDecoderSource(codecName: string): string {
+  return `/**
+ * Decoder for: ${codecName}
+ *
+ * Decoder API:
+ *   Decoder.payload.data        - Raw payload (hex string, base64, or text)
+ *   Decoder.payload.fport       - LoRaWAN fport number
+ *   Decoder.payload.timestamp   - Packet timestamp (ms)
+ *   Decoder.payload.hardware_id - Device hardware ID
+ *   Decoder.send(sensors)       - Send decoded sensor array
+ *   Decoder.error(message)      - Report an error
+ */
+try {
+  const buffer = Buffer.from(Decoder.payload.data, 'hex');
+  const sensors = [];
+
+  // TODO: Parse your device payload here
+  // Example:
+  // const temperature = buffer.readInt16BE(0) / 100;
+  // sensors.push({
+  //   channel: 1,
+  //   type: 'temp',
+  //   unit: 'c',
+  //   value: temperature,
+  //   name: 'Temperature'
+  // });
+
+  Decoder.send(sensors);
+} catch (e) {
+  Decoder.error(e.message);
+}
+`;
+}
+
+/**
+ * Default encoder.js template
+ */
+function getDefaultEncoderSource(codecName: string): string {
+  return `/**
+ * Encoder for: ${codecName}
+ *
+ * Encoder API:
+ *   Encoder.channel  - Target channel number
+ *   Encoder.value    - Value to encode (number, boolean, or object)
+ *   Encoder.send(payload) - Send encoded payload
+ *   Encoder.error(message) - Report an error
+ *
+ * Payload format:
+ *   { format: 'hex', data: '...' }     - Hex string
+ *   { format: 'text', text: '...' }    - Text string
+ *   { format: 'json', json: {...} }    - JSON object
+ */
+try {
+  const channel = Encoder.channel;
+  const value = Encoder.value;
+
+  // TODO: Encode your downlink command here
+  // Example:
+  // const buffer = Buffer.alloc(2);
+  // buffer.writeUInt8(channel, 0);
+  // buffer.writeUInt8(value ? 1 : 0, 1);
+  // Encoder.send({ format: 'hex', data: buffer.toString('hex'), fport: 1 });
+
+  Encoder.error('Encoder not implemented');
+} catch (e) {
+  Encoder.error(e.message);
+}
+`;
+}
+
+/**
+ * Default common.js template with shared utilities
+ */
+function getDefaultCommonSource(): string {
+  return `/**
+ * Common utilities shared between decoder and encoder
+ */
+
+/**
+ * Convert bytes to hex string
+ */
+function bytesToHex(bytes) {
+  return Array.from(bytes)
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/**
+ * Convert hex string to bytes
+ */
+function hexToBytes(hex) {
+  const bytes = [];
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes.push(parseInt(hex.substr(i, 2), 16));
+  }
+  return bytes;
+}
+
+/**
+ * Read a signed 16-bit integer (big-endian)
+ */
+function readInt16BE(buffer, offset) {
+  const val = (buffer[offset] << 8) | buffer[offset + 1];
+  return val > 0x7fff ? val - 0x10000 : val;
+}
+
+/**
+ * Read an unsigned 16-bit integer (big-endian)
+ */
+function readUInt16BE(buffer, offset) {
+  return (buffer[offset] << 8) | buffer[offset + 1];
+}
+
+/**
+ * Read a signed 16-bit integer (little-endian)
+ */
+function readInt16LE(buffer, offset) {
+  const val = buffer[offset] | (buffer[offset + 1] << 8);
+  return val > 0x7fff ? val - 0x10000 : val;
+}
+
+/**
+ * Read an unsigned 16-bit integer (little-endian)
+ */
+function readUInt16LE(buffer, offset) {
+  return buffer[offset] | (buffer[offset + 1] << 8);
+}
+`;
+}
+
+/**
+ * Default readme.md template
+ */
+function getDefaultReadmeSource(codecName: string): string {
+  return `# ${codecName}
+
+## Overview
+
+This codec decodes and encodes payloads for the ${codecName} device.
+
+## Payload Format
+
+Describe your device's payload format here.
+
+### Uplink (Decoder)
+
+| Byte | Description |
+|------|-------------|
+| 0-1  | Example field |
+
+### Downlink (Encoder)
+
+| Byte | Description |
+|------|-------------|
+| 0    | Command type |
+
+## Channels
+
+| Channel | Type | Unit | Description |
+|---------|------|------|-------------|
+| 1       | temp | c    | Temperature |
+
+## Examples
+
+### Decode Example
+
+Input (hex): \`0102030405\`
+
+Output:
+\`\`\`json
+[
+  { "channel": 1, "type": "temp", "unit": "c", "value": 25.5 }
+]
+\`\`\`
+
+## References
+
+- [Device Documentation](https://example.com)
+`;
+}
+
 export function createCodecsCommands(): Command {
   const codecs = new Command('codecs').description('Manage codecs for device payload encoding/decoding');
 
@@ -219,7 +403,7 @@ export function createCodecsCommands(): Command {
       try {
         const files: CodecFile[] = [];
 
-        // Add decoder file
+        // Add decoder file (user-provided or default)
         if (options.decoder) {
           if (!existsSync(options.decoder)) {
             throw new Error(`Decoder file not found: ${options.decoder}`);
@@ -228,9 +412,14 @@ export function createCodecsCommands(): Command {
             name: 'decoder.js',
             source: readFileSync(options.decoder, 'utf-8'),
           });
+        } else {
+          files.push({
+            name: 'decoder.js',
+            source: getDefaultDecoderSource(options.name),
+          });
         }
 
-        // Add encoder file
+        // Add encoder file (user-provided or default)
         if (options.encoder) {
           if (!existsSync(options.encoder)) {
             throw new Error(`Encoder file not found: ${options.encoder}`);
@@ -239,7 +428,24 @@ export function createCodecsCommands(): Command {
             name: 'encoder.js',
             source: readFileSync(options.encoder, 'utf-8'),
           });
+        } else {
+          files.push({
+            name: 'encoder.js',
+            source: getDefaultEncoderSource(options.name),
+          });
         }
+
+        // Add default common.js
+        files.push({
+          name: 'common.js',
+          source: getDefaultCommonSource(),
+        });
+
+        // Add default readme.md
+        files.push({
+          name: 'readme.md',
+          source: getDefaultReadmeSource(options.name),
+        });
 
         // Add additional files
         if (options.file) {
