@@ -13,13 +13,15 @@ import { createRegistryCommands } from './commands/registry.js';
 import { createGatewaysCommands } from './commands/gateways.js';
 import { createCompletionCommands } from './commands/completion.js';
 import { createDescribeCommands } from './commands/describe.js';
+import { createVersionCommands } from './commands/version.js';
+import { getCurrentVersion } from './lib/version.js';
 
 const program = new Command();
 
 program
   .name('mydevices')
   .description('CLI tool for managing myDevices IoT platform')
-  .version('1.0.0');
+  .version(getCurrentVersion());
 
 // Register all command groups
 program.addCommand(createAuthCommands());
@@ -35,6 +37,7 @@ program.addCommand(createRegistryCommands());
 program.addCommand(createGatewaysCommands());
 program.addCommand(createCompletionCommands());
 program.addCommand(createDescribeCommands());
+program.addCommand(createVersionCommands());
 
 // Parse and execute
 program.parse();
