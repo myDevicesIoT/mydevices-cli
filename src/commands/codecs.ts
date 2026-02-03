@@ -114,34 +114,27 @@ export function createCodecsCommands(): Command {
   codecs
     .command('list')
     .description('List codecs')
-    .option('-l, --limit <number>', 'Results limit', '20')
-    .option('--offset <number>', 'Pagination offset', '0')
     .option('--opensource', 'Filter opensource codecs')
     .option('--public', 'Filter public codecs')
     .option('--official', 'Filter official codecs')
     .option('--json', 'Output as JSON')
-    .action(async (options: ListOptions & {
-      offset?: string;
+    .action(async (options: GlobalOptions & {
       opensource?: boolean;
       public?: boolean;
       official?: boolean;
     }) => {
       const spinner = ora('Fetching codecs...').start();
       try {
-        const params: Record<string, unknown> = {
-          limit: parseInt(options.limit as unknown as string, 10),
-          offset: parseInt(options.offset || '0', 10),
-        };
+        const params: Record<string, unknown> = {};
         if (options.opensource) params.opensource = true;
         if (options.public) params.public = true;
         if (options.official) params.official = true;
 
-        const response = await apiGet<Codec[] | CodecListResponse>(getCodecsPath(), params);
+        const response = await apiGet<Codec[]>(getCodecsPath(), params);
         spinner.stop();
 
-        // Handle both array response and wrapped response
-        const codecList = Array.isArray(response) ? response : response.codecs || [];
-        const total = Array.isArray(response) ? codecList.length : response.total;
+        const codecList = Array.isArray(response) ? response : [];
+        const total = codecList.length;
 
         output(codecList, {
           json: options.json,
