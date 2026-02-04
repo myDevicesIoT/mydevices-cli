@@ -87,24 +87,43 @@ export function createUsersCommands(): Command {
   users
     .command('create')
     .description('Create a new user')
-    .requiredOption('-e, --email <email>', 'User email')
+    .option('-e, --email <email>', 'User email (required unless using --data)')
     .option('--password <password>', 'User password')
     .option('--first-name <name>', 'First name')
     .option('--last-name <name>', 'Last name')
     .option('--phone <phone>', 'Phone number')
     .option('--locale <locale>', 'Locale')
     .option('--notify', 'Send notification email')
+    .option('-d, --data <json>', 'JSON body (individual options override)')
     .option('--json', 'Output as JSON')
     .action(async (options) => {
-      const spinner = ora('Creating user...').start();
       try {
-        const data: Record<string, unknown> = { email: options.email };
+        // Parse JSON data if provided
+        let data: Record<string, unknown> = {};
+        if (options.data) {
+          try {
+            data = JSON.parse(options.data);
+          } catch {
+            error('Invalid JSON in --data option');
+            process.exit(1);
+          }
+        }
+
+        // Individual options override JSON data
+        if (options.email) data.email = options.email;
         if (options.password) data.password = options.password;
         if (options.firstName) data.first_name = options.firstName;
         if (options.lastName) data.last_name = options.lastName;
         if (options.phone) data.phone_number = options.phone;
         if (options.locale) data.locale = options.locale;
 
+        // Validate required fields
+        if (!data.email) {
+          error('--email is required (or provide in --data)');
+          process.exit(1);
+        }
+
+        const spinner = ora('Creating user...').start();
         const queryString = options.notify ? '?notify=true' : '';
         const user = await apiPost<User>(`/v1.0/admin/users${queryString}`, data);
         spinner.stop();
@@ -119,7 +138,6 @@ export function createUsersCommands(): Command {
           }
         }
       } catch (err) {
-        spinner.stop();
         error(err instanceof Error ? err.message : 'Failed to create user');
         process.exit(1);
       }
@@ -133,16 +151,33 @@ export function createUsersCommands(): Command {
     .option('--last-name <name>', 'Last name')
     .option('--phone <phone>', 'Phone number')
     .option('--locale <locale>', 'Locale')
+    .option('-d, --data <json>', 'JSON body (individual options override)')
     .option('--json', 'Output as JSON')
     .action(async (id: string, options) => {
-      const spinner = ora('Updating user...').start();
       try {
-        const data: Record<string, unknown> = {};
+        // Parse JSON data if provided
+        let data: Record<string, unknown> = {};
+        if (options.data) {
+          try {
+            data = JSON.parse(options.data);
+          } catch {
+            error('Invalid JSON in --data option');
+            process.exit(1);
+          }
+        }
+
+        // Individual options override JSON data
         if (options.firstName) data.first_name = options.firstName;
         if (options.lastName) data.last_name = options.lastName;
         if (options.phone) data.phone_number = options.phone;
         if (options.locale) data.locale = options.locale;
 
+        if (Object.keys(data).length === 0) {
+          error('No fields to update. Provide --data or individual options.');
+          process.exit(1);
+        }
+
+        const spinner = ora('Updating user...').start();
         const user = await apiPut<User>(`/v1.0/admin/users/${id}`, data);
         spinner.stop();
 
@@ -152,7 +187,6 @@ export function createUsersCommands(): Command {
           success('User updated successfully');
         }
       } catch (err) {
-        spinner.stop();
         error(err instanceof Error ? err.message : 'Failed to update user');
         process.exit(1);
       }

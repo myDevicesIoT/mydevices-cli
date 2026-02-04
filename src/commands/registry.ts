@@ -208,32 +208,59 @@ export function createRegistryCommands(): Command {
   registry
     .command('create')
     .description('Register a new device')
-    .requiredOption('--hardware-id <id>', 'Device hardware ID')
-    .requiredOption('--device-type <id>', 'Device type/template ID')
-    .requiredOption('--network <network>', 'Network ID (use "registry networks" to list)')
+    .option('--hardware-id <id>', 'Device hardware ID (required unless using --data)')
+    .option('--device-type <id>', 'Device type/template ID (required unless using --data)')
+    .option('--network <network>', 'Network ID (required unless using --data, use "registry networks" to list)')
     .option('--sku <sku>', 'Product SKU')
+    .option('-d, --data <json>', 'JSON body (individual options override)')
     .option('--json', 'Output as JSON')
     .action(async (options: GlobalOptions & {
-      hardwareId: string;
-      deviceType: string;
-      network: string;
+      hardwareId?: string;
+      deviceType?: string;
+      network?: string;
       sku?: string;
+      data?: string;
     }) => {
-      const spinner = ora('Registering device...').start();
       try {
         const clientId = getConfig('clientId');
-        const data: Record<string, unknown> = {
-          application_id: clientId,
-          hardware_id: options.hardwareId,
-          device_type_id: options.deviceType,
-          network: options.network,
-        };
-        if (options.sku) {
-          data.sku = options.sku;
-        } else {
+
+        // Parse JSON data if provided
+        let data: Record<string, unknown> = { application_id: clientId };
+        if (options.data) {
+          try {
+            const parsed = JSON.parse(options.data);
+            data = { ...data, ...parsed };
+          } catch {
+            error('Invalid JSON in --data option');
+            process.exit(1);
+          }
+        }
+
+        // Individual options override JSON data
+        if (options.hardwareId) data.hardware_id = options.hardwareId;
+        if (options.deviceType) data.device_type_id = options.deviceType;
+        if (options.network) data.network = options.network;
+        if (options.sku !== undefined) {
+          data.sku = options.sku || null;
+        } else if (!data.sku) {
           data.sku = null;
         }
 
+        // Validate required fields
+        if (!data.hardware_id) {
+          error('--hardware-id is required (or provide in --data)');
+          process.exit(1);
+        }
+        if (!data.device_type_id) {
+          error('--device-type is required (or provide device_type_id in --data)');
+          process.exit(1);
+        }
+        if (!data.network) {
+          error('--network is required (or provide in --data)');
+          process.exit(1);
+        }
+
+        const spinner = ora('Registering device...').start();
         const entry = await apiPost<RegistryEntry>(getRegistryPath(), data);
         spinner.stop();
 
@@ -248,7 +275,6 @@ export function createRegistryCommands(): Command {
           detail('Device Type', entry.device_type_id);
         }
       } catch (err) {
-        spinner.stop();
         error(err instanceof Error ? err.message : 'Failed to register device');
         process.exit(1);
       }

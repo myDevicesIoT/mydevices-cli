@@ -117,21 +117,40 @@ export function createDevicesCommands(): Command {
   devices
     .command('create')
     .description('Create a new device')
-    .requiredOption('-n, --name <name>', 'Device name')
+    .option('-n, --name <name>', 'Device name (required unless using --data)')
     .option('--hardware-id <id>', 'Hardware ID (EUI)')
     .option('--location-id <id>', 'Location ID')
     .option('--device-type-id <id>', 'Device type ID')
     .option('--external-id <id>', 'External ID')
+    .option('-d, --data <json>', 'JSON body (individual options override)')
     .option('--json', 'Output as JSON')
     .action(async (options) => {
-      const spinner = ora('Creating device...').start();
       try {
-        const data: Record<string, unknown> = { thing_name: options.name };
+        // Parse JSON data if provided
+        let data: Record<string, unknown> = {};
+        if (options.data) {
+          try {
+            data = JSON.parse(options.data);
+          } catch {
+            error('Invalid JSON in --data option');
+            process.exit(1);
+          }
+        }
+
+        // Individual options override JSON data
+        if (options.name) data.thing_name = options.name;
         if (options.hardwareId) data.hardware_id = options.hardwareId;
         if (options.locationId) data.location_id = options.locationId;
         if (options.deviceTypeId) data.device_type_id = options.deviceTypeId;
         if (options.externalId) data.external_id = options.externalId;
 
+        // Validate required fields
+        if (!data.thing_name) {
+          error('--name is required (or provide thing_name in --data)');
+          process.exit(1);
+        }
+
+        const spinner = ora('Creating device...').start();
         const device = await apiPost<Device>('/v1.0/admin/things', data);
         spinner.stop();
 
@@ -142,7 +161,6 @@ export function createDevicesCommands(): Command {
           detail('ID', device.id);
         }
       } catch (err) {
-        spinner.stop();
         error(err instanceof Error ? err.message : 'Failed to create device');
         process.exit(1);
       }
@@ -154,14 +172,31 @@ export function createDevicesCommands(): Command {
     .argument('<id>', 'Device ID')
     .option('-n, --name <name>', 'Device name')
     .option('--external-id <id>', 'External ID')
+    .option('-d, --data <json>', 'JSON body (individual options override)')
     .option('--json', 'Output as JSON')
     .action(async (id: string, options) => {
-      const spinner = ora('Updating device...').start();
       try {
-        const data: Record<string, unknown> = {};
+        // Parse JSON data if provided
+        let data: Record<string, unknown> = {};
+        if (options.data) {
+          try {
+            data = JSON.parse(options.data);
+          } catch {
+            error('Invalid JSON in --data option');
+            process.exit(1);
+          }
+        }
+
+        // Individual options override JSON data
         if (options.name) data.thing_name = options.name;
         if (options.externalId) data.external_id = options.externalId;
 
+        if (Object.keys(data).length === 0) {
+          error('No fields to update. Provide --data or individual options.');
+          process.exit(1);
+        }
+
+        const spinner = ora('Updating device...').start();
         const device = await apiPut<Device>(`/v1.0/admin/things/${id}`, data);
         spinner.stop();
 
@@ -171,7 +206,6 @@ export function createDevicesCommands(): Command {
           success('Device updated successfully');
         }
       } catch (err) {
-        spinner.stop();
         error(err instanceof Error ? err.message : 'Failed to update device');
         process.exit(1);
       }

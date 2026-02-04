@@ -78,7 +78,7 @@ export function createCompaniesCommands(): Command {
   companies
     .command('create')
     .description('Create a new company')
-    .requiredOption('-n, --name <name>', 'Company name')
+    .option('-n, --name <name>', 'Company name (required unless using --data)')
     .option('--address <address>', 'Street address')
     .option('--city <city>', 'City')
     .option('--state <state>', 'State')
@@ -86,11 +86,23 @@ export function createCompaniesCommands(): Command {
     .option('--country <country>', 'Country')
     .option('--timezone <timezone>', 'Timezone')
     .option('--user-id <userId>', 'Owner user ID')
+    .option('-d, --data <json>', 'JSON body (individual options override)')
     .option('--json', 'Output as JSON')
     .action(async (options) => {
-      const spinner = ora('Creating company...').start();
       try {
-        const data: Record<string, unknown> = { name: options.name };
+        // Parse JSON data if provided
+        let data: Record<string, unknown> = {};
+        if (options.data) {
+          try {
+            data = JSON.parse(options.data);
+          } catch {
+            error('Invalid JSON in --data option');
+            process.exit(1);
+          }
+        }
+
+        // Individual options override JSON data
+        if (options.name) data.name = options.name;
         if (options.address) data.address = options.address;
         if (options.city) data.city = options.city;
         if (options.state) data.state = options.state;
@@ -99,6 +111,13 @@ export function createCompaniesCommands(): Command {
         if (options.timezone) data.timezone = options.timezone;
         if (options.userId) data.user_id = options.userId;
 
+        // Validate required fields
+        if (!data.name) {
+          error('--name is required (or provide in --data)');
+          process.exit(1);
+        }
+
+        const spinner = ora('Creating company...').start();
         const company = await apiPost<Company>('/v1.0/admin/companies', data);
         spinner.stop();
 
@@ -109,7 +128,6 @@ export function createCompaniesCommands(): Command {
           detail('ID', company.id);
         }
       } catch (err) {
-        spinner.stop();
         error(err instanceof Error ? err.message : 'Failed to create company');
         process.exit(1);
       }
@@ -126,11 +144,22 @@ export function createCompaniesCommands(): Command {
     .option('--zip <zip>', 'ZIP code')
     .option('--country <country>', 'Country')
     .option('--timezone <timezone>', 'Timezone')
+    .option('-d, --data <json>', 'JSON body (individual options override)')
     .option('--json', 'Output as JSON')
     .action(async (id: string, options) => {
-      const spinner = ora('Updating company...').start();
       try {
-        const data: Record<string, unknown> = {};
+        // Parse JSON data if provided
+        let data: Record<string, unknown> = {};
+        if (options.data) {
+          try {
+            data = JSON.parse(options.data);
+          } catch {
+            error('Invalid JSON in --data option');
+            process.exit(1);
+          }
+        }
+
+        // Individual options override JSON data
         if (options.name) data.name = options.name;
         if (options.address) data.address = options.address;
         if (options.city) data.city = options.city;
@@ -139,6 +168,12 @@ export function createCompaniesCommands(): Command {
         if (options.country) data.country = options.country;
         if (options.timezone) data.timezone = options.timezone;
 
+        if (Object.keys(data).length === 0) {
+          error('No fields to update. Provide --data or individual options.');
+          process.exit(1);
+        }
+
+        const spinner = ora('Updating company...').start();
         const company = await apiPut<Company>(`/v1.0/admin/companies/${id}`, data);
         spinner.stop();
 
@@ -148,7 +183,6 @@ export function createCompaniesCommands(): Command {
           success('Company updated successfully');
         }
       } catch (err) {
-        spinner.stop();
         error(err instanceof Error ? err.message : 'Failed to update company');
         process.exit(1);
       }
