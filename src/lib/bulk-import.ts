@@ -307,7 +307,7 @@ async function createLocation(
   };
 
   if (parentId) payload.parent_id = parentId;
-  if (userId) payload.primary_users = [userId];
+  if (userId) payload.user_id = userId;
   if (companyId) payload.company_id = companyId;
   if (locationData.external_id) payload.external_id = locationData.external_id;
   if (locationData.address) payload.address = locationData.address;

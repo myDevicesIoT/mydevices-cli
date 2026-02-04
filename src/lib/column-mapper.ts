@@ -283,7 +283,6 @@ export interface LocationDefaults {
   city?: string;
   state?: string;
   country?: string;
-  timezone?: string;
   industry?: string;
 }
 
@@ -320,14 +319,6 @@ export async function promptLocationDefaults(mappings: ColumnMapping): Promise<L
     defaults.country = await input({
       message: 'Default country (required):',
     });
-  }
-
-  if (!mappedFields.has('location.timezone')) {
-    defaults.timezone = await input({
-      message: 'Default timezone (optional):',
-      default: '',
-    });
-    if (!defaults.timezone) delete defaults.timezone;
   }
 
   if (!mappedFields.has('location.industry')) {
