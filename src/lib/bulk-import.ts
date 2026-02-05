@@ -230,15 +230,28 @@ function sortLocationsByDepth(locations: Map<string, LocationNode>): string[] {
 }
 
 /**
- * Flatten nested locations from API response
+ * Flatten nested locations from API response, building full hierarchy paths.
+ * Returns a map of "Parent/Child/Grandchild" path -> Location so that
+ * identically-named locations at different levels are distinguished.
  */
-function flattenLocations(locations: Location[], result: Location[] = []): Location[] {
+function flattenLocationsWithPaths(
+  locations: Location[],
+  parentPath: string = ''
+): Map<string, Location> {
+  const result = new Map<string, Location>();
+
   for (const loc of locations) {
-    result.push(loc);
+    const path = parentPath ? `${parentPath}/${loc.name}` : loc.name;
+    result.set(path, loc);
+
     if (loc.locations && loc.locations.length > 0) {
-      flattenLocations(loc.locations, result);
+      const childPaths = flattenLocationsWithPaths(loc.locations, path);
+      for (const [childPath, childLoc] of childPaths) {
+        result.set(childPath, childLoc);
+      }
     }
   }
+
   return result;
 }
 
@@ -330,30 +343,18 @@ async function fetchTemplates(templateIds: string[]): Promise<Map<string, Templa
  * Fetch existing locations for a user
  */
 async function fetchExistingLocations(userId?: string): Promise<Map<string, Location>> {
-  const locationMap = new Map<string, Location>();
-
   try {
     const params: Record<string, unknown> = { limit: 100 };
     if (userId) {
       params.user_id = userId;
     }
     const response = await apiGet<LocationsResponse>(getLocationsPath(), params);
-
-    const flattened = flattenLocations(response.rows);
-    for (const loc of flattened) {
-      // Key by name (and parent for uniqueness)
-      const key = loc.parent_id ? `${loc.name}::${loc.parent_id}` : loc.name;
-      locationMap.set(key, loc);
-      // Also map by just name for simpler lookups
-      if (!locationMap.has(loc.name)) {
-        locationMap.set(loc.name, loc);
-      }
-    }
+    return flattenLocationsWithPaths(response.rows);
   } catch {
     // No existing locations or error fetching
   }
 
-  return locationMap;
+  return new Map<string, Location>();
 }
 
 /**
@@ -512,20 +513,13 @@ export async function bulkImport(
   // Step 4: Create/match locations
   const locationIdMap = new Map<string, number>(); // path -> id
 
-  // First, try to match existing locations by name
-  for (const [name, loc] of existingLocations) {
-    if (!name.includes('::')) {
-      locationIdMap.set(name, loc.id);
-    }
-  }
-
   // Create new locations in order (parents before children)
   for (const path of sortedPaths) {
     const node = locationPaths.get(path)!;
 
-    // Check if already exists by name (simple match)
-    if (existingLocations.has(node.name)) {
-      const existing = existingLocations.get(node.name)!;
+    // Check if already exists by full hierarchy path
+    if (existingLocations.has(path)) {
+      const existing = existingLocations.get(path)!;
       locationIdMap.set(path, existing.id);
       summary.locationsMatched++;
       summary.results.push({
