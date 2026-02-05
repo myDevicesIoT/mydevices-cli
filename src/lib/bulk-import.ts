@@ -48,6 +48,33 @@ interface RegistryResponse {
   rows: RegistryEntry[];
 }
 
+interface TemplateMeta {
+  key: string;
+  value: string;
+}
+
+interface DeviceUse {
+  name: string;
+  default?: boolean;
+}
+
+interface DeviceTemplate {
+  id: string;
+  name: string;
+  category?: string;  // This becomes device_category
+  meta?: TemplateMeta[];
+  device_use?: DeviceUse[];
+}
+
+/**
+ * Extracted template info for device creation
+ */
+interface TemplateInfo {
+  device_category?: string;
+  sensor_type?: string;
+  sensor_use?: string;
+}
+
 interface ImportResult {
   success: boolean;
   row: number;
@@ -89,7 +116,11 @@ interface ParsedRow {
     hardware_id?: string;
     name?: string;
     external_id?: string;
+    device_type_id?: string;
     sensor_use?: string;
+    sensor_type?: string;
+    device_category?: string;
+    metadata?: Record<string, string>;
   };
 }
 
@@ -126,6 +157,13 @@ export function transformRows(
       if (target.startsWith('location.')) {
         const field = target.replace('location.', '') as keyof ParsedRow['locationMeta'];
         (parsed.locationMeta as Record<string, string>)[field] = value;
+      } else if (target.startsWith('device.metadata.')) {
+        // Handle device metadata fields
+        const metadataKey = target.replace('device.metadata.', '');
+        if (!parsed.device.metadata) {
+          parsed.device.metadata = {};
+        }
+        parsed.device.metadata[metadataKey] = value;
       } else if (target.startsWith('device.')) {
         const field = target.replace('device.', '') as keyof ParsedRow['device'];
         (parsed.device as Record<string, string>)[field] = value;
@@ -224,6 +262,68 @@ function getDevicesPath(): string {
 function getRegistryPath(): string {
   const clientId = getConfig('clientId');
   return `/v1.1/organizations/${clientId}/applications/${clientId}/things/registry`;
+}
+
+/**
+ * Get API base path for templates
+ */
+function getTemplatesPath(): string {
+  const clientId = getConfig('clientId');
+  return `/v1.1/organizations/${clientId}/applications/${clientId}/things/types`;
+}
+
+/**
+ * Extract template info for device creation
+ * - device_category = template.category
+ * - sensor_use = device_use where default=true
+ * - sensor_type = meta where key='device_type'
+ */
+function extractTemplateInfo(template: DeviceTemplate): TemplateInfo {
+  const info: TemplateInfo = {};
+
+  // device_category from template.category
+  if (template.category) {
+    info.device_category = template.category;
+  }
+
+  // sensor_use from device_use where default=true
+  if (template.device_use && template.device_use.length > 0) {
+    const defaultUse = template.device_use.find((du) => du.default);
+    if (defaultUse) {
+      info.sensor_use = defaultUse.name;
+    }
+  }
+
+  // sensor_type from meta where key='device_type'
+  if (template.meta && template.meta.length > 0) {
+    const deviceTypeMeta = template.meta.find((m) => m.key === 'device_type');
+    if (deviceTypeMeta) {
+      info.sensor_type = deviceTypeMeta.value;
+    }
+  }
+
+  return info;
+}
+
+/**
+ * Fetch device templates by IDs
+ */
+async function fetchTemplates(templateIds: string[]): Promise<Map<string, TemplateInfo>> {
+  const templateMap = new Map<string, TemplateInfo>();
+
+  if (templateIds.length === 0) return templateMap;
+
+  // Fetch each template (API doesn't support batch lookup)
+  for (const templateId of templateIds) {
+    try {
+      const template = await apiGet<DeviceTemplate>(`${getTemplatesPath()}/${templateId}`);
+      templateMap.set(templateId, extractTemplateInfo(template));
+    } catch {
+      // Template not found, will use fallback values
+    }
+  }
+
+  return templateMap;
 }
 
 /**
@@ -327,37 +427,37 @@ async function createDevice(
   deviceData: ParsedRow['device'],
   locationId: number,
   userId?: string,
-  companyId?: number
+  companyId?: number,
+  templateInfo?: TemplateInfo
 ): Promise<Device> {
   const clientId = getConfig('clientId');
 
-  const payload = {
-    application_id: clientId,
+  // Use template values as fallbacks for device fields
+  const sensorUse = deviceData.sensor_use || templateInfo?.sensor_use;
+  const sensorType = deviceData.sensor_type || templateInfo?.sensor_type;
+  const deviceCategory = deviceData.device_category || templateInfo?.device_category;
+
+  const payload: Record<string, unknown> = {
     user_id: userId || clientId,
-    location_id: locationId,
+    application_id: clientId,
     company_id: companyId,
+    location_id: locationId,
     device: {
       hardware_id: deviceData.hardware_id,
       name: deviceData.name || deviceData.hardware_id,
-      sensor_use: deviceData.sensor_use,
+      sensor_use: sensorUse,
+      sensor_type: sensorType,
+      device_category: deviceCategory,
+      external_id: deviceData.external_id,
     },
   };
 
-  const device = await apiPost<Device>(getDevicesPath(), payload);
-
-  // If we have external_id, update the device
-  if (deviceData.external_id) {
-    const updatePayload: Record<string, unknown> = {
-      id: device.id,
-      application_id: clientId,
-      user_id: userId || clientId,
-      external_id: deviceData.external_id,
-    };
-
-    await apiPut<Device>(`${getDevicesPath()}/${device.id}`, updatePayload);
+  // Add metadata if provided
+  if (deviceData.metadata && Object.keys(deviceData.metadata).length > 0) {
+    payload.metadata = deviceData.metadata;
   }
 
-  return device;
+  return await apiPost<Device>(getDevicesPath(), payload);
 }
 
 /**
@@ -502,7 +602,20 @@ export async function bulkImport(
     }
   }
 
-  // Step 5: Validate hardware IDs
+  // Step 5: Fetch device templates
+  const templateIds = [...new Set(
+    rows
+      .filter((r) => r.device.device_type_id)
+      .map((r) => r.device.device_type_id!)
+  )];
+
+  let templateMap = new Map<string, TemplateInfo>();
+  if (templateIds.length > 0) {
+    onProgress?.(0, rows.length, 'Fetching device templates...');
+    templateMap = await fetchTemplates(templateIds);
+  }
+
+  // Step 6: Validate hardware IDs
   const hardwareIds = rows
     .filter((r) => r.device.hardware_id)
     .map((r) => r.device.hardware_id!);
@@ -510,7 +623,7 @@ export async function bulkImport(
   onProgress?.(0, rows.length, 'Validating hardware IDs...');
   await validateHardwareIds(hardwareIds);
 
-  // Step 6: Create devices
+  // Step 7: Create devices
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     onProgress?.(i + 1, rows.length, `Processing row ${row.rowNumber}...`);
@@ -553,7 +666,12 @@ export async function bulkImport(
 
     // Create device
     try {
-      const device = await createDevice(row.device, locationId!, userId, companyId);
+      // Get template info if device_type_id is provided
+      const templateInfo = row.device.device_type_id
+        ? templateMap.get(row.device.device_type_id)
+        : undefined;
+
+      const device = await createDevice(row.device, locationId!, userId, companyId, templateInfo);
       summary.devicesCreated++;
       summary.results.push({
         success: true,

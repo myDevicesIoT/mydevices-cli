@@ -35,7 +35,11 @@ export const TARGET_FIELDS = {
     { value: 'device.hardware_id', label: 'Device Hardware ID', description: 'Hardware ID / DevEUI (required)' },
     { value: 'device.name', label: 'Device Name', description: 'Display name' },
     { value: 'device.external_id', label: 'Device External ID', description: 'External reference ID' },
-    { value: 'device.sensor_use', label: 'Device Sensor Use', description: 'Sensor use type' },
+    { value: 'device.device_type_id', label: 'Device Type/Template ID', description: 'Template ID (auto-fills sensor_type, sensor_use, device_category)' },
+    { value: 'device.sensor_use', label: 'Device Sensor Use', description: 'Sensor use type (optional if device_type_id mapped)' },
+    { value: 'device.sensor_type', label: 'Device Sensor Type', description: 'Sensor type (optional if device_type_id mapped)' },
+    { value: 'device.device_category', label: 'Device Category', description: 'Device category (optional if device_type_id mapped)' },
+    { value: 'device.metadata', label: 'Device Metadata', description: 'Custom metadata key-value pair (prompts for key name)' },
   ],
 };
 
@@ -54,7 +58,10 @@ const COLUMN_PATTERNS: Record<string, string[]> = {
   'device.hardware_id': ['hardware id', 'hardware_id', 'device id', 'device_id', 'deveui', 'dev eui', 'eui', 'serial number', 'serial'],
   'device.name': ['device name', 'name', 'sensor name', 'thing name', 'equipment description'],
   'device.external_id': ['external id', 'external_id', 'ext id', 'reference', 'ref', 'id equipment'],
-  'device.sensor_use': ['sensor use', 'use', 'device use', 'type', 'sensor type', 'category'],
+  'device.device_type_id': ['device type id', 'device_type_id', 'template id', 'template_id', 'type id', 'type_id'],
+  'device.sensor_use': ['sensor use', 'use', 'device use'],
+  'device.sensor_type': ['sensor type', 'type', 'device type'],
+  'device.device_category': ['device category', 'category', 'module'],
 };
 
 /**
@@ -184,13 +191,22 @@ export async function interactiveMapping(csvColumns: string[]): Promise<MappingR
       default: defaultValue || undefined,
     });
 
-    mappings[column] = answer;
+    // Handle metadata mapping - prompt for key name
+    if (answer === 'device.metadata') {
+      const metadataKey = await input({
+        message: `  Enter metadata key name for "${column}":`,
+        default: column.toLowerCase().replace(/\s+/g, '_'),
+      });
+      mappings[column] = `device.metadata.${metadataKey}`;
+    } else {
+      mappings[column] = answer;
 
-    if (answer === 'location.hierarchy') {
-      // Track hierarchy columns in order
-      hierarchy.columns.push(column);
-    } else if (answer) {
-      alreadyMapped.add(answer);
+      if (answer === 'location.hierarchy') {
+        // Track hierarchy columns in order
+        hierarchy.columns.push(column);
+      } else if (answer) {
+        alreadyMapped.add(answer);
+      }
     }
   }
 
@@ -221,7 +237,11 @@ export function displayMappingSummary(mappings: ColumnMapping, hierarchy: Hierar
     if (target === 'location.hierarchy') continue; // Already shown above
     const paddedCol = column.padEnd(maxColLen);
     if (target) {
-      console.log(`  ${paddedCol} → ${chalk.green(target)}`);
+      // Format metadata mappings nicely
+      const displayTarget = target.startsWith('device.metadata.')
+        ? `device.metadata.${chalk.cyan(target.replace('device.metadata.', ''))}`
+        : target;
+      console.log(`  ${paddedCol} → ${chalk.green(displayTarget)}`);
     } else {
       console.log(`  ${paddedCol} → ${chalk.yellow('(skipped)')}`);
     }
@@ -237,9 +257,14 @@ export function validateMapping(mappings: ColumnMapping, hierarchy: HierarchyMap
   const errors: string[] = [];
   const mappedFields = new Set(Object.values(mappings).filter(Boolean));
 
-  // Check for required device field
+  // Check for required device fields
   if (!mappedFields.has('device.hardware_id')) {
     errors.push('Missing required mapping: device.hardware_id');
+  }
+
+  // sensor_type is required unless device_type_id is mapped (template provides it)
+  if (!mappedFields.has('device.sensor_type') && !mappedFields.has('device.device_type_id')) {
+    errors.push('Missing required mapping: device.sensor_type (or map device.device_type_id to auto-fill from template)');
   }
 
   // Check that if any device field is mapped, hardware_id is too
