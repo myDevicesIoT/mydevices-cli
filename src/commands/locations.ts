@@ -64,6 +64,7 @@ export function createLocationsCommands(): Command {
           detail('ZIP', location.zip);
           detail('Country', location.country);
           detail('Timezone', location.timezone);
+          detail('Industry', location.industry);
           detail('Company ID', location.company_id);
           detail('Status', location.status);
           detail('Created', location.created_at);
@@ -78,7 +79,8 @@ export function createLocationsCommands(): Command {
   locations
     .command('create')
     .description('Create a new location')
-    .requiredOption('-n, --name <name>', 'Location name')
+    .option('-n, --name <name>', 'Location name (required unless using --data)')
+    .option('-i, --industry <industry>', 'Industry type (required unless using --data)')
     .option('--address <address>', 'Street address')
     .option('--city <city>', 'City')
     .option('--state <state>', 'State')
@@ -87,11 +89,24 @@ export function createLocationsCommands(): Command {
     .option('--timezone <timezone>', 'Timezone')
     .option('--user-id <userId>', 'Owner user ID')
     .option('--company-id <companyId>', 'Company ID')
+    .option('-d, --data <json>', 'JSON body (overrides individual options)')
     .option('--json', 'Output as JSON')
     .action(async (options) => {
-      const spinner = ora('Creating location...').start();
       try {
-        const data: Record<string, unknown> = { name: options.name };
+        // Parse JSON data if provided
+        let data: Record<string, unknown> = {};
+        if (options.data) {
+          try {
+            data = JSON.parse(options.data);
+          } catch {
+            error('Invalid JSON in --data option');
+            process.exit(1);
+          }
+        }
+
+        // Individual options override JSON data
+        if (options.name) data.name = options.name;
+        if (options.industry) data.industry = options.industry;
         if (options.address) data.address = options.address;
         if (options.city) data.city = options.city;
         if (options.state) data.state = options.state;
@@ -101,6 +116,17 @@ export function createLocationsCommands(): Command {
         if (options.userId) data.user_id = options.userId;
         if (options.companyId) data.company_id = options.companyId;
 
+        // Validate required fields
+        if (!data.name) {
+          error('--name is required (or provide in --data)');
+          process.exit(1);
+        }
+        if (!data.industry) {
+          error('--industry is required (or provide in --data)');
+          process.exit(1);
+        }
+
+        const spinner = ora('Creating location...').start();
         const location = await apiPost<Location>('/v1.0/admin/locations', data);
         spinner.stop();
 
@@ -111,7 +137,6 @@ export function createLocationsCommands(): Command {
           detail('ID', location.id);
         }
       } catch (err) {
-        spinner.stop();
         error(err instanceof Error ? err.message : 'Failed to create location');
         process.exit(1);
       }
@@ -128,11 +153,23 @@ export function createLocationsCommands(): Command {
     .option('--zip <zip>', 'ZIP code')
     .option('--country <country>', 'Country')
     .option('--timezone <timezone>', 'Timezone')
+    .option('--industry <industry>', 'Industry type')
+    .option('-d, --data <json>', 'JSON body (individual options override)')
     .option('--json', 'Output as JSON')
     .action(async (id: string, options) => {
-      const spinner = ora('Updating location...').start();
       try {
-        const data: Record<string, unknown> = {};
+        // Parse JSON data if provided
+        let data: Record<string, unknown> = {};
+        if (options.data) {
+          try {
+            data = JSON.parse(options.data);
+          } catch {
+            error('Invalid JSON in --data option');
+            process.exit(1);
+          }
+        }
+
+        // Individual options override JSON data
         if (options.name) data.name = options.name;
         if (options.address) data.address = options.address;
         if (options.city) data.city = options.city;
@@ -140,7 +177,14 @@ export function createLocationsCommands(): Command {
         if (options.zip) data.zip = options.zip;
         if (options.country) data.country = options.country;
         if (options.timezone) data.timezone = options.timezone;
+        if (options.industry) data.industry = options.industry;
 
+        if (Object.keys(data).length === 0) {
+          error('No fields to update. Provide --data or individual options.');
+          process.exit(1);
+        }
+
+        const spinner = ora('Updating location...').start();
         const location = await apiPut<Location>(`/v1.0/admin/locations/${id}`, data);
         spinner.stop();
 
@@ -150,7 +194,6 @@ export function createLocationsCommands(): Command {
           success('Location updated successfully');
         }
       } catch (err) {
-        spinner.stop();
         error(err instanceof Error ? err.message : 'Failed to update location');
         process.exit(1);
       }

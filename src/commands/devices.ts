@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import ora from 'ora';
 import { apiGet, apiPost, apiPut, apiDelete } from '../lib/api.js';
+import { getConfig } from '../lib/config.js';
 import { output, success, error, header, detail, outputTable } from '../lib/output.js';
 import type { Device, DeviceReading, ApiResponse, GlobalOptions, ListOptions } from '../types/index.js';
 
@@ -25,6 +26,7 @@ export function createDevicesCommands(): Command {
     .option('--status <status>', 'Filter by status (0=active, 1=deactivated)')
     .option('--type <type>', 'Filter by thing type (devices or gateways)')
     .option('--external-id <id>', 'Filter by external ID')
+    .option('--include-metadata', 'Include device metadata in response')
     .option('--json', 'Output as JSON')
     .action(async (options: ListOptions & {
       locationId?: string;
@@ -33,6 +35,7 @@ export function createDevicesCommands(): Command {
       status?: string;
       type?: string;
       externalId?: string;
+      includeMetadata?: boolean;
     }) => {
       const spinner = ora('Fetching devices...').start();
       try {
@@ -46,6 +49,7 @@ export function createDevicesCommands(): Command {
         if (options.status) params.status = options.status;
         if (options.type) params.thing_type = options.type;
         if (options.externalId) params.external_id = options.externalId;
+        if (options.includeMetadata) params.include_metadata = true;
 
         const response = await apiGet<ApiResponse<Device>>('/v1.0/admin/things', params);
         spinner.stop();
@@ -117,22 +121,71 @@ export function createDevicesCommands(): Command {
   devices
     .command('create')
     .description('Create a new device')
-    .requiredOption('-n, --name <name>', 'Device name')
+    .option('-n, --name <name>', 'Device name (required unless using --data)')
     .option('--hardware-id <id>', 'Hardware ID (EUI)')
     .option('--location-id <id>', 'Location ID')
-    .option('--device-type-id <id>', 'Device type ID')
+    .option('--user-id <id>', 'User ID')
+    .option('--company-id <id>', 'Company ID')
+    .option('--sensor-type <type>', 'Sensor type')
+    .option('--sensor-use <use>', 'Sensor use')
+    .option('--device-category <category>', 'Device category')
     .option('--external-id <id>', 'External ID')
+    .option('-m, --metadata <json>', 'JSON object with key-value pairs for device metadata')
+    .option('-d, --data <json>', 'JSON body (individual options override)')
     .option('--json', 'Output as JSON')
     .action(async (options) => {
-      const spinner = ora('Creating device...').start();
       try {
-        const data: Record<string, unknown> = { thing_name: options.name };
-        if (options.hardwareId) data.hardware_id = options.hardwareId;
-        if (options.locationId) data.location_id = options.locationId;
-        if (options.deviceTypeId) data.device_type_id = options.deviceTypeId;
-        if (options.externalId) data.external_id = options.externalId;
+        const clientId = getConfig('clientId');
 
-        const device = await apiPost<Device>('/v1.0/admin/things', data);
+        // Parse JSON data if provided
+        let data: Record<string, unknown> = {};
+        if (options.data) {
+          try {
+            data = JSON.parse(options.data);
+          } catch {
+            error('Invalid JSON in --data option');
+            process.exit(1);
+          }
+        }
+
+        // Build device object
+        const deviceObj: Record<string, unknown> = (data.device as Record<string, unknown>) || {};
+        if (options.name) deviceObj.name = options.name;
+        if (options.hardwareId) deviceObj.hardware_id = options.hardwareId;
+        if (options.sensorType) deviceObj.sensor_type = options.sensorType;
+        if (options.sensorUse) deviceObj.sensor_use = options.sensorUse;
+        if (options.deviceCategory) deviceObj.device_category = options.deviceCategory;
+        if (options.externalId) deviceObj.external_id = options.externalId;
+
+        // Build payload with nested device object
+        const payload: Record<string, unknown> = {
+          application_id: data.application_id || clientId,
+          user_id: options.userId || data.user_id || clientId,
+          ...data,
+          device: deviceObj,
+        };
+
+        if (options.locationId) payload.location_id = options.locationId;
+        if (options.companyId) payload.company_id = parseInt(options.companyId, 10);
+
+        // Parse and add metadata if provided
+        if (options.metadata) {
+          try {
+            payload.metadata = JSON.parse(options.metadata);
+          } catch {
+            error('Invalid JSON in --metadata option');
+            process.exit(1);
+          }
+        }
+
+        // Validate required fields
+        if (!deviceObj.name && !deviceObj.hardware_id) {
+          error('--name or --hardware-id is required');
+          process.exit(1);
+        }
+
+        const spinner = ora('Creating device...').start();
+        const device = await apiPost<Device>('/v1.0/admin/things', payload);
         spinner.stop();
 
         if (options.json) {
@@ -142,7 +195,6 @@ export function createDevicesCommands(): Command {
           detail('ID', device.id);
         }
       } catch (err) {
-        spinner.stop();
         error(err instanceof Error ? err.message : 'Failed to create device');
         process.exit(1);
       }
@@ -154,14 +206,42 @@ export function createDevicesCommands(): Command {
     .argument('<id>', 'Device ID')
     .option('-n, --name <name>', 'Device name')
     .option('--external-id <id>', 'External ID')
+    .option('-m, --metadata <json>', 'JSON object with key-value pairs for device metadata')
+    .option('-d, --data <json>', 'JSON body (individual options override)')
     .option('--json', 'Output as JSON')
     .action(async (id: string, options) => {
-      const spinner = ora('Updating device...').start();
       try {
-        const data: Record<string, unknown> = {};
+        // Parse JSON data if provided
+        let data: Record<string, unknown> = {};
+        if (options.data) {
+          try {
+            data = JSON.parse(options.data);
+          } catch {
+            error('Invalid JSON in --data option');
+            process.exit(1);
+          }
+        }
+
+        // Individual options override JSON data
         if (options.name) data.thing_name = options.name;
         if (options.externalId) data.external_id = options.externalId;
 
+        // Parse and add metadata if provided
+        if (options.metadata) {
+          try {
+            data.metadata = JSON.parse(options.metadata);
+          } catch {
+            error('Invalid JSON in --metadata option');
+            process.exit(1);
+          }
+        }
+
+        if (Object.keys(data).length === 0) {
+          error('No fields to update. Provide --data or individual options.');
+          process.exit(1);
+        }
+
+        const spinner = ora('Updating device...').start();
         const device = await apiPut<Device>(`/v1.0/admin/things/${id}`, data);
         spinner.stop();
 
@@ -171,7 +251,6 @@ export function createDevicesCommands(): Command {
           success('Device updated successfully');
         }
       } catch (err) {
-        spinner.stop();
         error(err instanceof Error ? err.message : 'Failed to update device');
         process.exit(1);
       }
