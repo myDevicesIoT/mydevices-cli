@@ -283,20 +283,16 @@ export function validateMapping(mappings: ColumnMapping, hierarchy: HierarchyMap
   const errors: string[] = [];
   const mappedFields = new Set(Object.values(mappings).filter(Boolean));
 
-  // Check for required device fields
-  if (!mappedFields.has('device.hardware_id')) {
-    errors.push('Missing required mapping: device.hardware_id');
-  }
-
-  // sensor_type is required unless device_type_id is mapped (template provides it)
-  if (!mappedFields.has('device.sensor_type') && !mappedFields.has('device.device_type_id')) {
-    errors.push('Missing required mapping: device.sensor_type (or map device.device_type_id to auto-fill from template)');
-  }
-
-  // Check that if any device field is mapped, hardware_id is too
+  // Device fields are only required when at least one device field is mapped
   const hasDeviceFields = [...mappedFields].some((f) => f?.startsWith('device.'));
-  if (hasDeviceFields && !mappedFields.has('device.hardware_id')) {
-    errors.push('device.hardware_id is required when mapping device fields');
+  if (hasDeviceFields) {
+    if (!mappedFields.has('device.hardware_id')) {
+      errors.push('device.hardware_id is required when mapping device fields');
+    }
+
+    if (!mappedFields.has('device.sensor_type') && !mappedFields.has('device.device_type_id')) {
+      errors.push('Missing required mapping: device.sensor_type (or map device.device_type_id to auto-fill from template)');
+    }
   }
 
   // Check that at least one hierarchy level is mapped for locations
