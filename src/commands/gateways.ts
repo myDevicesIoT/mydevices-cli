@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import ora from 'ora';
-import { confirm } from '@inquirer/prompts';
+import { confirm, select } from '@inquirer/prompts';
 import { apiGet, apiPost } from '../lib/api.js';
 import { getConfig } from '../lib/config.js';
 import { output, header, detail, success } from '../lib/output.js';
@@ -106,6 +106,15 @@ interface GatewayStatsEntry {
 interface GatewayStatsResponse {
   result: GatewayStatsEntry[];
 }
+
+// Software update artifact from latest.json
+interface SoftwareArtifact {
+  url: string;
+  checksum: string;
+  version: string;
+}
+
+type ArtifactManifest = Record<string, Record<string, SoftwareArtifact>>;
 
 // ============================================================================
 // Helper Functions
@@ -633,6 +642,79 @@ export function createGatewaysCommands(): Command {
       } catch (err) {
         spinner.stop();
         error(err instanceof Error ? err.message : 'Failed to fetch command result');
+        process.exit(1);
+      }
+    });
+
+  // --------------------------------------------------------------------------
+  // gateways update-software
+  // --------------------------------------------------------------------------
+  gateways
+    .command('update-software')
+    .description('Update software on a gateway')
+    .argument('<hardware-id>', 'Gateway hardware ID (e.g., eui-647fdafffe01433c)')
+    .option('--json', 'Output as JSON')
+    .action(async (hardwareId: string, options: GlobalOptions) => {
+      hardwareId = normalizeHardwareId(hardwareId);
+      try {
+        const spinner = ora('Fetching available updates...').start();
+        const res = await fetch('https://docs.mydevices.com/artifacts/latest.json');
+        if (!res.ok) {
+          spinner.stop();
+          error(`Failed to fetch update manifest: ${res.statusText}`);
+          process.exit(1);
+        }
+        const manifest: ArtifactManifest = await res.json() as ArtifactManifest;
+        spinner.stop();
+
+        // Build choices from manifest
+        const choices: { name: string; value: { gateway: string; software: string; artifact: SoftwareArtifact } }[] = [];
+        for (const [gateway, packages] of Object.entries(manifest)) {
+          for (const [software, artifact] of Object.entries(packages)) {
+            choices.push({
+              name: `${gateway} - ${software} ${artifact.version}`,
+              value: { gateway, software, artifact },
+            });
+          }
+        }
+
+        const selected = await select({
+          message: 'Select software to install:',
+          choices,
+        });
+
+        const confirmed = await confirm({
+          message: `Update ${selected.software} ${selected.artifact.version} (${selected.gateway}) on ${hardwareId}?`,
+          default: false,
+        });
+
+        if (!confirmed) {
+          console.log('Update cancelled.');
+          return;
+        }
+
+        const updateSpinner = ora(`Sending update command to ${hardwareId}...`).start();
+        const response = await apiPost<Record<string, unknown>>(
+          `${getGatewaysPath()}/${hardwareId}/commands`,
+          {
+            command: 'update',
+            options: {
+              update_url: selected.artifact.url,
+              update_checksum: selected.artifact.checksum,
+            },
+          }
+        );
+        updateSpinner.stop();
+
+        if (options.json) {
+          output(response, { json: true });
+        } else {
+          success(`Update command sent to gateway ${hardwareId}`);
+          detail('Software', `${selected.software} ${selected.artifact.version}`);
+          detail('Gateway Type', selected.gateway);
+        }
+      } catch (err) {
+        error(err instanceof Error ? err.message : 'Failed to send update command');
         process.exit(1);
       }
     });
