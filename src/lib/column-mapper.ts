@@ -171,7 +171,8 @@ export async function interactiveMapping(csvColumns: string[]): Promise<MappingR
 
   console.log(chalk.cyan('\nColumn Mapping'));
   console.log(chalk.gray('Map each CSV column to a target field, or skip if not needed.'));
-  console.log(chalk.gray('For location hierarchy, map columns in order (e.g., Site → Building → Floor → Room).\n'));
+  console.log(chalk.gray('For location hierarchy, map columns in order (e.g., Site → Building → Floor → Room).'));
+  console.log(chalk.gray(`Press ${chalk.yellow('s')} to quickly skip a column.\n`));
 
   for (const column of csvColumns) {
     const suggestion = suggestMapping(column);
@@ -185,11 +186,36 @@ export async function interactiveMapping(csvColumns: string[]): Promise<MappingR
       defaultValue = suggestion;
     }
 
-    const answer = await select({
-      message: `Map "${chalk.bold(column)}" to:`,
-      choices: choices.filter((c) => !c.value?.startsWith('__separator_') && !c.value?.startsWith('__disabled_')),
-      default: defaultValue || undefined,
-    });
+    let answer: string | null;
+    const ac = new AbortController();
+
+    const onData = (data: Buffer) => {
+      const char = data.toString();
+      if (char === 's' || char === 'S') {
+        ac.abort();
+      }
+    };
+    process.stdin.on('data', onData);
+
+    try {
+      answer = await select({
+        message: `Map "${chalk.bold(column)}" to:`,
+        choices: choices.filter((c) => !c.value?.startsWith('__separator_') && !c.value?.startsWith('__disabled_')),
+        default: defaultValue || undefined,
+      }, { signal: ac.signal });
+    } catch (err) {
+      if (ac.signal.aborted) {
+        // 's' pressed — skip this column
+        answer = null;
+        console.log(chalk.yellow(`  ↳ skipped`));
+      } else {
+        // Esc or Ctrl+C — cancel the whole operation
+        process.stdin.removeListener('data', onData);
+        throw err;
+      }
+    } finally {
+      process.stdin.removeListener('data', onData);
+    }
 
     // Handle metadata mapping - prompt for key name
     if (answer === 'device.metadata') {
