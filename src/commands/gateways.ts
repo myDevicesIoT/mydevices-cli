@@ -1,8 +1,9 @@
 import { Command } from 'commander';
 import ora from 'ora';
-import { apiGet } from '../lib/api.js';
+import { confirm } from '@inquirer/prompts';
+import { apiGet, apiPost } from '../lib/api.js';
 import { getConfig } from '../lib/config.js';
-import { output, header, detail } from '../lib/output.js';
+import { output, header, detail, success } from '../lib/output.js';
 import { error } from '../lib/output.js';
 import type { ApiResponse, GlobalOptions, ListOptions } from '../types/index.js';
 
@@ -115,6 +116,10 @@ function getGatewaysPath(): string {
   return `/v1.1/organizations/${clientId}/applications/${clientId}/gateways`;
 }
 
+function normalizeHardwareId(id: string): string {
+  return id.startsWith('eui-') ? id : `eui-${id}`;
+}
+
 function formatStatus(status: string): string {
   switch (status?.toUpperCase()) {
     case 'ACTIVATED':
@@ -215,6 +220,7 @@ export function createGatewaysCommands(): Command {
     .argument('<hardware-id>', 'Gateway hardware ID (e.g., eui-647fdafffe01433c)')
     .option('--json', 'Output as JSON')
     .action(async (hardwareId: string, options: GlobalOptions) => {
+      hardwareId = normalizeHardwareId(hardwareId);
       const spinner = ora('Fetching gateway...').start();
       try {
         const response = await apiGet<GatewayResponse>(`${getGatewaysPath()}/${hardwareId}`);
@@ -282,6 +288,7 @@ export function createGatewaysCommands(): Command {
       hours?: string;
       timezone?: string;
     }) => {
+      hardwareId = normalizeHardwareId(hardwareId);
       const spinner = ora('Fetching ping histogram...').start();
       try {
         let startTime: number;
@@ -362,6 +369,7 @@ export function createGatewaysCommands(): Command {
     .argument('<hardware-id>', 'Gateway hardware ID')
     .option('--json', 'Output as JSON')
     .action(async (hardwareId: string, options: GlobalOptions) => {
+      hardwareId = normalizeHardwareId(hardwareId);
       const spinner = ora('Fetching gateway stats...').start();
       try {
         const response = await apiGet<GatewayStatsResponse>(
@@ -462,6 +470,169 @@ export function createGatewaysCommands(): Command {
       } catch (err) {
         spinner.stop();
         error(err instanceof Error ? err.message : 'Failed to fetch gateway stats');
+        process.exit(1);
+      }
+    });
+
+  // --------------------------------------------------------------------------
+  // gateways reboot
+  // --------------------------------------------------------------------------
+  gateways
+    .command('reboot')
+    .description('Reboot a gateway')
+    .argument('<hardware-id>', 'Gateway hardware ID (e.g., eui-647fdafffe01433c)')
+    .option('-y, --yes', 'Skip confirmation prompt')
+    .option('--json', 'Output as JSON')
+    .action(async (hardwareId: string, options: GlobalOptions & { yes?: boolean }) => {
+      hardwareId = normalizeHardwareId(hardwareId);
+      try {
+        if (!options.yes) {
+          const confirmed = await confirm({
+            message: `Are you sure you want to reboot gateway ${hardwareId}?`,
+            default: false,
+          });
+          if (!confirmed) {
+            console.log('Reboot cancelled.');
+            return;
+          }
+        }
+
+        const spinner = ora(`Sending reboot command to ${hardwareId}...`).start();
+        const response = await apiPost<Record<string, unknown>>(
+          `${getGatewaysPath()}/${hardwareId}/commands`,
+          { command: 'reboot' }
+        );
+        spinner.stop();
+
+        if (options.json) {
+          output(response, { json: true });
+        } else {
+          success(`Reboot command sent to gateway ${hardwareId}`);
+        }
+      } catch (err) {
+        error(err instanceof Error ? err.message : 'Failed to send reboot command');
+        process.exit(1);
+      }
+    });
+
+  // --------------------------------------------------------------------------
+  // gateways exec
+  // --------------------------------------------------------------------------
+  gateways
+    .command('exec')
+    .description('Execute a remote shell command on a gateway')
+    .argument('<hardware-id>', 'Gateway hardware ID (e.g., eui-647fdafffe01433c)')
+    .argument('<command_line>', 'Command to execute on the gateway')
+    .option('--timeout <seconds>', 'Max time to wait for response', '30')
+    .option('--no-wait', 'Send command without waiting for result (prints exec ID)')
+    .option('--json', 'Output as JSON')
+    .action(async (hardwareId: string, commandLine: string, options: GlobalOptions & {
+      timeout?: string;
+      wait?: boolean;
+    }) => {
+      hardwareId = normalizeHardwareId(hardwareId);
+      try {
+        const spinner = ora('Sending command...').start();
+        const execResponse = await apiPost<{ exec_id: string }>(
+          `${getGatewaysPath()}/${hardwareId}/commands`,
+          { command: 'remote-shell', options: { command_line: commandLine } }
+        );
+        const execId = execResponse.exec_id;
+
+        if (!options.wait) {
+          spinner.stop();
+          if (options.json) {
+            output(execResponse, { json: true });
+          } else {
+            success('Command sent');
+            detail('Exec ID', execId);
+            console.log(`\nRun to check result:\n  mydevices gateways exec-result ${hardwareId} ${execId}`);
+          }
+          return;
+        }
+
+        // Poll for result
+        spinner.text = `Waiting for response (exec: ${execId})...`;
+        const timeoutMs = parseInt(options.timeout || '30', 10) * 1000;
+        const pollInterval = 2000;
+        const startTime = Date.now();
+
+        // Initial wait — commands take a few seconds to execute
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+        while (Date.now() - startTime < timeoutMs) {
+          const result = await apiGet<{ stdout: string; stderr: string }>(
+            `${getGatewaysPath()}/${hardwareId}/commands/${execId}`
+          );
+
+          // "Exec ID not found" means the command hasn't been processed yet
+          if (result.stderr === 'Exec ID not found') {
+            await new Promise(resolve => setTimeout(resolve, pollInterval));
+            continue;
+          }
+
+          // Got a real response
+          spinner.stop();
+
+          if (options.json) {
+            output({ exec_id: execId, ...result }, { json: true });
+          } else {
+            if (result.stdout) {
+              console.log(Buffer.from(result.stdout, 'base64').toString('utf-8'));
+            }
+            if (result.stderr) {
+              error(Buffer.from(result.stderr, 'base64').toString('utf-8'));
+            }
+          }
+          return;
+        }
+
+        // Timed out
+        spinner.stop();
+        error(`Timed out after ${options.timeout}s waiting for response`);
+        detail('Exec ID', execId);
+        console.log(`\nCheck result later:\n  mydevices gateways exec-result ${hardwareId} ${execId}`);
+        process.exit(1);
+      } catch (err) {
+        error(err instanceof Error ? err.message : 'Failed to execute remote command');
+        process.exit(1);
+      }
+    });
+
+  // --------------------------------------------------------------------------
+  // gateways exec-result
+  // --------------------------------------------------------------------------
+  gateways
+    .command('exec-result')
+    .description('Get the result of a previously executed remote command')
+    .argument('<hardware-id>', 'Gateway hardware ID')
+    .argument('<exec-id>', 'Execution ID from a previous exec command')
+    .option('--json', 'Output as JSON')
+    .action(async (hardwareId: string, execId: string, options: GlobalOptions) => {
+      hardwareId = normalizeHardwareId(hardwareId);
+      const spinner = ora('Fetching result...').start();
+      try {
+        const result = await apiGet<{ stdout: string; stderr: string }>(
+          `${getGatewaysPath()}/${hardwareId}/commands/${execId}`
+        );
+        spinner.stop();
+
+        if (options.json) {
+          output({ exec_id: execId, ...result }, { json: true });
+        } else {
+          if (result.stdout) {
+            console.log(Buffer.from(result.stdout, 'base64').toString('utf-8'));
+          }
+          if (result.stderr) {
+            error(Buffer.from(result.stderr, 'base64').toString('utf-8'));
+          }
+          if (!result.stdout && !result.stderr) {
+            console.log('(no output)');
+          }
+        }
+      } catch (err) {
+        spinner.stop();
+        error(err instanceof Error ? err.message : 'Failed to fetch command result');
         process.exit(1);
       }
     });
