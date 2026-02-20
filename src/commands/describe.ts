@@ -672,4 +672,5 @@ function commandToYaml(cmd: CommandSchema, indent: number): string {
 }
 
 // Export schema for MCP server
-export { getCommandSchema, CLISchema, CommandSchema, OptionSchema, ArgumentSchema };
+export { getCommandSchema };
+export type { CLISchema, CommandSchema, OptionSchema, ArgumentSchema };
