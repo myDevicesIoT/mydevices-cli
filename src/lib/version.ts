@@ -1,14 +1,8 @@
-/**
- * CLI Version
- *
- * Update this constant when releasing a new version.
- * This should match the version in package.json.
- */
-export const VERSION = '1.0.0';
+import pkg from '../../package.json';
 
 /**
- * Get the current CLI version
+ * Get the current CLI version from package.json
  */
 export function getCurrentVersion(): string {
-  return VERSION;
+  return pkg.version;
 }
