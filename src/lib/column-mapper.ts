@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import chalk from 'chalk';
 
 export interface ColumnMapping {
-  [csvColumn: string]: string | null; // null means skip
+  [csvColumn: string]: string | string[] | null; // null means skip, array for multiple targets
 }
 
 export interface HierarchyMapping {
@@ -28,6 +28,7 @@ export const TARGET_FIELDS = {
     { value: 'location.city', label: 'Location City', description: 'City name (applied to deepest location)' },
     { value: 'location.state', label: 'Location State', description: 'State/Province (applied to deepest location)' },
     { value: 'location.country', label: 'Location Country', description: 'Country code (applied to deepest location)' },
+    { value: 'location.zip', label: 'Location ZIP Code', description: 'ZIP/Postal code (applied to deepest location)' },
     { value: 'location.timezone', label: 'Location Timezone', description: 'Timezone (applied to deepest location)' },
     { value: 'location.industry', label: 'Location Industry', description: 'Industry type (required, applied to deepest location)' },
   ],
@@ -53,6 +54,7 @@ const COLUMN_PATTERNS: Record<string, string[]> = {
   'location.city': ['city', 'town'],
   'location.state': ['state', 'province', 'region'],
   'location.country': ['country', 'country code'],
+  'location.zip': ['zip', 'zipcode', 'zip code', 'postal code', 'postal'],
   'location.timezone': ['timezone', 'time zone', 'tz'],
   'location.industry': ['industry', 'sector', 'vertical', 'business type'],
   'device.hardware_id': ['hardware id', 'hardware_id', 'device id', 'device_id', 'deveui', 'dev eui', 'eui', 'serial number', 'serial'],
@@ -158,6 +160,9 @@ function buildMappingChoices(alreadyMapped: Set<string>, hierarchyCount: number)
   // Add skip option
   choices.push({ name: chalk.yellow('(skip this column)'), value: null });
 
+  // Add undo option (will be filtered out for the first column)
+  choices.push({ name: chalk.red('← undo previous mapping'), value: '__undo__' });
+
   return choices;
 }
 
@@ -174,11 +179,20 @@ export async function interactiveMapping(csvColumns: string[]): Promise<MappingR
   console.log(chalk.gray('For location hierarchy, map columns in order (e.g., Site → Building → Floor → Room).'));
   console.log(chalk.gray(`Press ${chalk.yellow('s')} to quickly skip a column.\n`));
 
-  for (const column of csvColumns) {
+  let i = 0;
+  while (i < csvColumns.length) {
+    const column = csvColumns[i];
     const suggestion = suggestMapping(column);
 
     // Build choices, marking already-mapped fields
     const choices = buildMappingChoices(alreadyMapped, hierarchy.columns.length);
+
+    // Filter choices: remove separators, disabled items, and undo on first column
+    const filteredChoices = choices.filter((c) => {
+      if (c.value?.startsWith('__separator_') || c.value?.startsWith('__disabled_')) return false;
+      if (c.value === '__undo__' && i === 0) return false;
+      return true;
+    });
 
     // Find default choice index
     let defaultValue: string | null = null;
@@ -199,8 +213,8 @@ export async function interactiveMapping(csvColumns: string[]): Promise<MappingR
 
     try {
       answer = await select({
-        message: `Map "${chalk.bold(column)}" to:`,
-        choices: choices.filter((c) => !c.value?.startsWith('__separator_') && !c.value?.startsWith('__disabled_')),
+        message: `Map "${chalk.bold(column)}" (${i + 1}/${csvColumns.length}) to:`,
+        choices: filteredChoices,
         default: defaultValue || undefined,
       }, { signal: ac.signal });
     } catch (err) {
@@ -215,6 +229,34 @@ export async function interactiveMapping(csvColumns: string[]): Promise<MappingR
       }
     } finally {
       process.stdin.removeListener('data', onData);
+    }
+
+    // Handle undo - clear previous column's mapping and go back
+    if (answer === '__undo__') {
+      const prevColumn = csvColumns[i - 1];
+      const prevMapping = mappings[prevColumn];
+
+      // Remove previous mapping from alreadyMapped
+      if (prevMapping) {
+        const targets = Array.isArray(prevMapping) ? prevMapping : [prevMapping];
+        for (const target of targets) {
+          if (target && target !== 'location.hierarchy') {
+            alreadyMapped.delete(target);
+          }
+        }
+      }
+
+      // Remove from hierarchy if it was a hierarchy mapping
+      if (prevMapping === 'location.hierarchy') {
+        hierarchy.columns.pop();
+      }
+
+      // Clear the mapping
+      delete mappings[prevColumn];
+
+      console.log(chalk.red(`  ↳ undid mapping for "${prevColumn}"`));
+      i--;
+      continue;
     }
 
     // Handle metadata mapping - prompt for key name
@@ -232,8 +274,29 @@ export async function interactiveMapping(csvColumns: string[]): Promise<MappingR
         hierarchy.columns.push(column);
       } else if (answer) {
         alreadyMapped.add(answer);
+
+        // Offer to also map this column to another field
+        const addAnother = await confirm({
+          message: `  Also map "${column}" to another field?`,
+          default: false,
+        });
+
+        if (addAnother) {
+          const extraChoices = buildMappingChoices(alreadyMapped, hierarchy.columns.length);
+          const extraAnswer = await select({
+            message: `  Also map "${chalk.bold(column)}" to:`,
+            choices: extraChoices.filter((c) => !c.value?.startsWith('__separator_') && !c.value?.startsWith('__disabled_')),
+          });
+
+          if (extraAnswer) {
+            mappings[column] = [answer, extraAnswer];
+            alreadyMapped.add(extraAnswer);
+          }
+        }
       }
     }
+
+    i++;
   }
 
   return { mappings, hierarchy };
@@ -263,11 +326,13 @@ export function displayMappingSummary(mappings: ColumnMapping, hierarchy: Hierar
     if (target === 'location.hierarchy') continue; // Already shown above
     const paddedCol = column.padEnd(maxColLen);
     if (target) {
-      // Format metadata mappings nicely
-      const displayTarget = target.startsWith('device.metadata.')
-        ? `device.metadata.${chalk.cyan(target.replace('device.metadata.', ''))}`
-        : target;
-      console.log(`  ${paddedCol} → ${chalk.green(displayTarget)}`);
+      const targets = Array.isArray(target) ? target : [target];
+      const displayTargets = targets.map((t) =>
+        t.startsWith('device.metadata.')
+          ? `device.metadata.${chalk.cyan(t.replace('device.metadata.', ''))}`
+          : t
+      );
+      console.log(`  ${paddedCol} → ${chalk.green(displayTargets.join(', '))}`);
     } else {
       console.log(`  ${paddedCol} → ${chalk.yellow('(skipped)')}`);
     }
@@ -281,7 +346,11 @@ export function displayMappingSummary(mappings: ColumnMapping, hierarchy: Hierar
  */
 export function validateMapping(mappings: ColumnMapping, hierarchy: HierarchyMapping): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
-  const mappedFields = new Set(Object.values(mappings).filter(Boolean));
+  const mappedFields = new Set(
+    Object.values(mappings)
+      .filter(Boolean)
+      .flatMap((v) => (Array.isArray(v) ? v : [v!]))
+  );
 
   // Device fields are only required when at least one device field is mapped
   const hasDeviceFields = [...mappedFields].some((f) => f?.startsWith('device.'));
@@ -330,6 +399,7 @@ export interface LocationDefaults {
   city?: string;
   state?: string;
   country?: string;
+  zip?: string;
   industry?: string;
 }
 
@@ -337,7 +407,11 @@ export interface LocationDefaults {
  * Prompt for location default values (for fields not mapped from CSV)
  */
 export async function promptLocationDefaults(mappings: ColumnMapping): Promise<LocationDefaults> {
-  const mappedFields = new Set(Object.values(mappings).filter(Boolean));
+  const mappedFields = new Set(
+    Object.values(mappings)
+      .filter(Boolean)
+      .flatMap((v) => (Array.isArray(v) ? v : [v!]))
+  );
   const defaults: LocationDefaults = {};
 
   console.log(chalk.cyan('\nLocation Defaults'));
@@ -365,6 +439,12 @@ export async function promptLocationDefaults(mappings: ColumnMapping): Promise<L
   if (!mappedFields.has('location.country')) {
     defaults.country = await input({
       message: 'Default country (required):',
+    });
+  }
+
+  if (!mappedFields.has('location.zip')) {
+    defaults.zip = await input({
+      message: 'Default ZIP code:',
     });
   }
 

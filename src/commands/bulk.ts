@@ -20,6 +20,9 @@ import {
   transformRows,
   bulkImport,
   displayImportSummary,
+  fetchDeviceType,
+  extractFormSettings,
+  promptFormSettings,
 } from '../lib/bulk-import.js';
 import { error, success } from '../lib/output.js';
 
@@ -40,7 +43,12 @@ export function createBulkCommands(): Command {
     .option('--location-city <city>', 'Default city for all locations')
     .option('--location-state <state>', 'Default state for all locations')
     .option('--location-country <country>', 'Default country for all locations')
+    .option('--location-zip <zip>', 'Default ZIP code for all locations')
     .option('--location-industry <industry>', 'Default industry for all locations')
+    .option('--no-location-prefix', 'Use raw row values as location names instead of "ColumnName Value"')
+    .option('--device-type-id <id>', 'Default device type/template ID for all devices')
+    .option('--sensor-use <use>', 'Default sensor use for all devices')
+    .option('--device-setting <key=value>', 'Device settings from form_settings (repeatable, e.g. --device-setting codec.timezone=UTC --device-setting codec.cost=1)', (val: string, prev: string[]) => { prev.push(val); return prev; }, [] as string[])
     .option('--json', 'Output results as JSON')
     .option('--output <file>', 'Save detailed results to file')
     .action(async (csvFile: string, options) => {
@@ -124,7 +132,7 @@ export function createBulkCommands(): Command {
       let locationDefaults: LocationDefaults = {};
       const hasCliDefaults = options.locationAddress || options.locationCity ||
                              options.locationState || options.locationCountry ||
-                             options.locationIndustry;
+                             options.locationZip || options.locationIndustry;
 
       if (hasCliDefaults) {
         // Use CLI-provided defaults
@@ -133,6 +141,7 @@ export function createBulkCommands(): Command {
           city: options.locationCity,
           state: options.locationState,
           country: options.locationCountry,
+          zip: options.locationZip,
           industry: options.locationIndustry,
         };
       } else {
@@ -142,6 +151,58 @@ export function createBulkCommands(): Command {
 
       // Transform rows
       const transformedRows = transformRows(parsedCSV.rows, mappings, hierarchy);
+
+      // Apply device defaults (CLI flags fill in when CSV doesn't provide a value)
+      if (options.deviceTypeId || options.sensorUse) {
+        for (const row of transformedRows) {
+          if (!row.device.hardware_id) continue;
+          if (options.deviceTypeId && !row.device.device_type_id) {
+            row.device.device_type_id = options.deviceTypeId;
+          }
+          if (options.sensorUse && !row.device.sensor_use) {
+            row.device.sensor_use = options.sensorUse;
+          }
+        }
+      }
+
+      // Fetch device type and handle form_settings
+      let deviceSettings: Record<string, string> = {};
+
+      if (options.deviceTypeId) {
+        // Parse --device-setting flags into a Record
+        const cliSettings: Record<string, string> = {};
+        if (options.deviceSetting && options.deviceSetting.length > 0) {
+          for (const setting of options.deviceSetting) {
+            const eqIndex = setting.indexOf('=');
+            if (eqIndex > 0) {
+              const key = setting.substring(0, eqIndex);
+              const value = setting.substring(eqIndex + 1);
+              cliSettings[key] = value;
+            } else {
+              error(`Invalid --device-setting format: "${setting}". Expected key=value`);
+              process.exit(1);
+            }
+          }
+        }
+
+        // Fetch device type template
+        const templateSpinner = ora('Fetching device type template...').start();
+        try {
+          const template = await fetchDeviceType(options.deviceTypeId);
+          templateSpinner.succeed(`Device type: ${template.name}`);
+
+          // Extract and prompt for form_settings
+          const formFields = extractFormSettings(template);
+          if (formFields.length > 0) {
+            deviceSettings = await promptFormSettings(formFields, cliSettings);
+            console.log(chalk.green(`\n✓ ${Object.keys(deviceSettings).length} device settings configured`));
+          }
+        } catch (err) {
+          templateSpinner.fail('Failed to fetch device type template');
+          error(err instanceof Error ? err.message : 'Unknown error');
+          process.exit(1);
+        }
+      }
 
       // Confirm import
       if (!options.dryRun) {
@@ -169,6 +230,9 @@ export function createBulkCommands(): Command {
           companyId: options.company ? parseInt(options.company, 10) : undefined,
           dryRun: options.dryRun,
           locationDefaults,
+          deviceTypeId: options.deviceTypeId,
+          deviceSettings,
+          prefixLocationName: options.locationPrefix !== false,
           onProgress: (current, total, message) => {
             importSpinner.text = `${message} (${current}/${total})`;
           },

@@ -58,12 +58,30 @@ interface DeviceUse {
   default?: boolean;
 }
 
-interface DeviceTemplate {
+export interface DeviceTemplate {
   id: string;
   name: string;
   category?: string;  // This becomes device_category
   meta?: TemplateMeta[];
   device_use?: DeviceUse[];
+}
+
+interface FormSettingsField {
+  order: number;
+  label: string;
+  type: string;
+  form: 'select' | 'input';
+  key: string;
+  default_value: string | number;
+  required: boolean;
+  values?: { value: string; label: string }[];
+  help_texts?: { value: string; order: number }[];
+}
+
+interface FormSettingsGroup {
+  order: number;
+  label: string | null;
+  variables: FormSettingsField[];
 }
 
 /**
@@ -109,6 +127,7 @@ interface ParsedRow {
     city?: string;
     state?: string;
     country?: string;
+    zip?: string;
     timezone?: string;
     industry?: string;
   };
@@ -148,25 +167,29 @@ export function transformRows(
     }
 
     // Process other mappings
-    for (const [csvColumn, target] of Object.entries(mappings)) {
-      if (!target || target === 'location.hierarchy') continue;
+    for (const [csvColumn, rawTarget] of Object.entries(mappings)) {
+      if (!rawTarget || rawTarget === 'location.hierarchy') continue;
 
       const value = row[csvColumn]?.trim();
       if (!value) continue;
 
-      if (target.startsWith('location.')) {
-        const field = target.replace('location.', '') as keyof ParsedRow['locationMeta'];
-        (parsed.locationMeta as Record<string, string>)[field] = value;
-      } else if (target.startsWith('device.metadata.')) {
-        // Handle device metadata fields
-        const metadataKey = target.replace('device.metadata.', '');
-        if (!parsed.device.metadata) {
-          parsed.device.metadata = {};
+      const targets = Array.isArray(rawTarget) ? rawTarget : [rawTarget];
+      for (const target of targets) {
+        if (target === 'location.hierarchy') continue;
+
+        if (target.startsWith('location.')) {
+          const field = target.replace('location.', '') as keyof ParsedRow['locationMeta'];
+          (parsed.locationMeta as Record<string, string>)[field] = value;
+        } else if (target.startsWith('device.metadata.')) {
+          const metadataKey = target.replace('device.metadata.', '');
+          if (!parsed.device.metadata) {
+            parsed.device.metadata = {};
+          }
+          parsed.device.metadata[metadataKey] = value;
+        } else if (target.startsWith('device.')) {
+          const field = target.replace('device.', '') as keyof ParsedRow['device'];
+          (parsed.device as Record<string, string>)[field] = value;
         }
-        parsed.device.metadata[metadataKey] = value;
-      } else if (target.startsWith('device.')) {
-        const field = target.replace('device.', '') as keyof ParsedRow['device'];
-        (parsed.device as Record<string, string>)[field] = value;
       }
     }
 
@@ -186,7 +209,11 @@ interface LocationNode {
   existingId?: number;
 }
 
-function buildLocationPaths(rows: ParsedRow[]): Map<string, LocationNode> {
+function formatLocationName(level: HierarchyLevel, prefixColumnName: boolean): string {
+  return prefixColumnName ? `${level.columnName} ${level.value}` : level.value;
+}
+
+function buildLocationPaths(rows: ParsedRow[], prefixColumnName: boolean = true): Map<string, LocationNode> {
   const locations = new Map<string, LocationNode>();
 
   for (const row of rows) {
@@ -196,7 +223,7 @@ function buildLocationPaths(rows: ParsedRow[]): Map<string, LocationNode> {
     let currentPath = '';
     for (let i = 0; i < row.locationHierarchy.length; i++) {
       const level = row.locationHierarchy[i];
-      const name = `${level.columnName} ${level.value}`;
+      const name = formatLocationName(level, prefixColumnName);
       const parentPath = currentPath || undefined;
       currentPath = currentPath ? `${currentPath}/${name}` : name;
 
@@ -230,26 +257,41 @@ function sortLocationsByDepth(locations: Map<string, LocationNode>): string[] {
 }
 
 /**
- * Flatten nested locations from API response, building full hierarchy paths.
- * Returns a map of "Parent/Child/Grandchild" path -> Location so that
- * identically-named locations at different levels are distinguished.
+ * Build a path map from a flat list of locations using parent_id to
+ * reconstruct the hierarchy.  Returns "Parent/Child/Grandchild" -> Location.
  */
-function flattenLocationsWithPaths(
-  locations: Location[],
-  parentPath: string = ''
+function buildPathsFromFlatLocations(
+  locations: Location[]
 ): Map<string, Location> {
   const result = new Map<string, Location>();
+  const idToLocation = new Map<number, Location>();
+  const idToPath = new Map<number, string>();
+
+  // Index locations by id
+  for (const loc of locations) {
+    idToLocation.set(loc.id, loc);
+  }
+
+  // Resolve full path for a location by walking up parent_id chain
+  function resolvePath(loc: Location): string {
+    const cached = idToPath.get(loc.id);
+    if (cached !== undefined) return cached;
+
+    let path: string;
+    if (loc.parent_id && idToLocation.has(loc.parent_id)) {
+      const parentPath = resolvePath(idToLocation.get(loc.parent_id)!);
+      path = `${parentPath}/${loc.name}`;
+    } else {
+      path = loc.name;
+    }
+
+    idToPath.set(loc.id, path);
+    return path;
+  }
 
   for (const loc of locations) {
-    const path = parentPath ? `${parentPath}/${loc.name}` : loc.name;
+    const path = resolvePath(loc);
     result.set(path, loc);
-
-    if (loc.locations && loc.locations.length > 0) {
-      const childPaths = flattenLocationsWithPaths(loc.locations, path);
-      for (const [childPath, childLoc] of childPaths) {
-        result.set(childPath, childLoc);
-      }
-    }
   }
 
   return result;
@@ -319,6 +361,116 @@ function extractTemplateInfo(template: DeviceTemplate): TemplateInfo {
 }
 
 /**
+ * Extract form_settings fields from a device type template's meta array.
+ * Returns a flat array of fields sorted by group order then field order.
+ * Returns empty array if no form_settings meta entry exists.
+ */
+export function extractFormSettings(template: DeviceTemplate): FormSettingsField[] {
+  if (!template.meta || template.meta.length === 0) return [];
+
+  const formSettingsMeta = template.meta.find((m) => m.key === 'form_settings');
+  if (!formSettingsMeta) return [];
+
+  try {
+    const groups: FormSettingsGroup[] = JSON.parse(formSettingsMeta.value);
+    return groups
+      .sort((a, b) => a.order - b.order)
+      .flatMap((group) =>
+        (group.variables || []).sort((a, b) => a.order - b.order)
+      );
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Validate that all rows with a device_type_id match the expected value.
+ * Returns an object with valid flag and list of mismatched rows.
+ */
+function validateDeviceTypeConsistency(
+  rows: ParsedRow[],
+  expectedDeviceTypeId: string
+): { valid: boolean; mismatches: { rowNumber: number; found: string }[] } {
+  const mismatches: { rowNumber: number; found: string }[] = [];
+
+  for (const row of rows) {
+    if (row.device.device_type_id && row.device.device_type_id !== expectedDeviceTypeId) {
+      mismatches.push({
+        rowNumber: row.rowNumber,
+        found: row.device.device_type_id,
+      });
+    }
+  }
+
+  return {
+    valid: mismatches.length === 0,
+    mismatches,
+  };
+}
+
+/**
+ * Prompt the user for form_settings values.
+ * Fields already provided via cliOverrides are skipped.
+ * Returns a Record<string, string> of key -> value.
+ */
+export async function promptFormSettings(
+  fields: FormSettingsField[],
+  cliOverrides: Record<string, string>
+): Promise<Record<string, string>> {
+  const { select, input } = await import('@inquirer/prompts');
+  const values: Record<string, string> = {};
+
+  console.log(chalk.cyan('\nDevice Settings'));
+  console.log(chalk.gray('Configure settings that will be applied to all imported devices.\n'));
+
+  for (const field of fields) {
+    // If CLI override provided, use it
+    if (cliOverrides[field.key] !== undefined) {
+      values[field.key] = cliOverrides[field.key];
+      console.log(chalk.gray(`  ${field.label}: ${cliOverrides[field.key]} (from --device-setting)`));
+      continue;
+    }
+
+    // Show help text if available
+    if (field.help_texts && field.help_texts.length > 0) {
+      const sortedHelp = [...field.help_texts].sort((a, b) => a.order - b.order);
+      for (const ht of sortedHelp) {
+        console.log(chalk.gray(`  ℹ ${ht.value}`));
+      }
+    }
+
+    if (field.form === 'select' && field.values && field.values.length > 0) {
+      const answer = await select({
+        message: field.label,
+        choices: field.values.map((v) => ({
+          name: v.label,
+          value: v.value,
+        })),
+        default: String(field.default_value),
+      });
+      values[field.key] = answer;
+    } else {
+      const answer = await input({
+        message: field.label,
+        default: field.default_value !== undefined ? String(field.default_value) : undefined,
+        validate: field.required ? (v: string) => (v.trim() ? true : `${field.label} is required`) : undefined,
+      });
+      values[field.key] = answer;
+    }
+  }
+
+  return values;
+}
+
+/**
+ * Fetch a single device type template by ID.
+ * Exported for use by the CLI command to extract form_settings.
+ */
+export async function fetchDeviceType(deviceTypeId: string): Promise<DeviceTemplate> {
+  return await apiGet<DeviceTemplate>(`${getTemplatesPath()}/${deviceTypeId}`);
+}
+
+/**
  * Fetch device templates by IDs
  */
 async function fetchTemplates(templateIds: string[]): Promise<Map<string, TemplateInfo>> {
@@ -340,16 +492,31 @@ async function fetchTemplates(templateIds: string[]): Promise<Map<string, Templa
 }
 
 /**
- * Fetch existing locations for a user
+ * Fetch existing locations for a user, paginating through all results
  */
 async function fetchExistingLocations(userId?: string): Promise<Map<string, Location>> {
   try {
-    const params: Record<string, unknown> = { limit: 100 };
-    if (userId) {
-      params.user_id = userId;
+    const allLocations: Location[] = [];
+    let page = 0;
+    const limit = 100;
+
+    // Paginate through all locations
+    while (true) {
+      const params: Record<string, unknown> = { limit, page };
+      if (userId) {
+        params.user_id = userId;
+      }
+      const response = await apiGet<LocationsResponse>(getLocationsPath(), params);
+      allLocations.push(...response.rows);
+
+      // Stop when we've fetched all locations
+      if (allLocations.length >= response.count || response.rows.length < limit) {
+        break;
+      }
+      page++;
     }
-    const response = await apiGet<LocationsResponse>(getLocationsPath(), params);
-    return flattenLocationsWithPaths(response.rows);
+
+    return buildPathsFromFlatLocations(allLocations);
   } catch {
     // No existing locations or error fetching
   }
@@ -390,6 +557,7 @@ interface LocationCreateData {
   city?: string;
   state?: string;
   country?: string;
+  zip?: string;
   timezone?: string;
   industry?: string;
 }
@@ -415,6 +583,7 @@ async function createLocation(
   if (locationData.city) payload.city = locationData.city;
   if (locationData.state) payload.state = locationData.state;
   if (locationData.country) payload.country = locationData.country;
+  if (locationData.zip) payload.zip = locationData.zip;
   if (locationData.timezone) payload.timezone = locationData.timezone;
   if (locationData.industry) payload.industry = locationData.industry;
 
@@ -462,14 +631,49 @@ async function createDevice(
 }
 
 /**
+ * Update a device's properties by merging new values into existing ones.
+ * The device's properties field is a stringified JSON object.
+ * New values override existing keys; existing keys not in newProperties are preserved.
+ */
+async function updateDeviceProperties(
+  deviceId: number | string,
+  existingProperties: string | undefined,
+  newProperties: Record<string, string>,
+  userId?: string
+): Promise<void> {
+  const clientId = getConfig('clientId');
+
+  let properties: Record<string, unknown> = {};
+  if (existingProperties) {
+    try {
+      properties = typeof existingProperties === 'string'
+        ? JSON.parse(existingProperties)
+        : (existingProperties as unknown as Record<string, unknown>);
+    } catch {
+      properties = {};
+    }
+  }
+
+  for (const [key, value] of Object.entries(newProperties)) {
+    properties[key] = value;
+  }
+
+  await apiPut(`${getDevicesPath()}/${deviceId}`, {
+    user_id: userId || clientId,
+    application_id: clientId,
+    properties,
+  });
+}
+
+/**
  * Get the deepest location path for a row
  */
-function getDeepestLocationPath(row: ParsedRow): string | undefined {
+function getDeepestLocationPath(row: ParsedRow, prefixColumnName: boolean = true): string | undefined {
   if (row.locationHierarchy.length === 0) return undefined;
 
   let path = '';
   for (const level of row.locationHierarchy) {
-    const name = `${level.columnName} ${level.value}`;
+    const name = formatLocationName(level, prefixColumnName);
     path = path ? `${path}/${name}` : name;
   }
   return path;
@@ -485,10 +689,13 @@ export async function bulkImport(
     companyId?: number;
     dryRun?: boolean;
     locationDefaults?: LocationDefaults;
+    deviceTypeId?: string;
+    deviceSettings?: Record<string, string>;
+    prefixLocationName?: boolean;
     onProgress?: (current: number, total: number, message: string) => void;
   }
 ): Promise<ImportSummary> {
-  const { userId, companyId, dryRun = false, locationDefaults = {}, onProgress } = options;
+  const { userId, companyId, dryRun = false, locationDefaults = {}, deviceTypeId, deviceSettings, prefixLocationName = true, onProgress } = options;
 
   const summary: ImportSummary = {
     locationsCreated: 0,
@@ -500,12 +707,25 @@ export async function bulkImport(
     results: [],
   };
 
+  // Step 0: Validate device type consistency if deviceTypeId is specified
+  if (deviceTypeId) {
+    const consistency = validateDeviceTypeConsistency(rows, deviceTypeId);
+    if (!consistency.valid) {
+      const mismatchDetails = consistency.mismatches
+        .map((m) => `  Row ${m.rowNumber}: found "${m.found}"`)
+        .join('\n');
+      throw new Error(
+        `Device type ID mismatch. All rows must use device type "${deviceTypeId}":\n${mismatchDetails}`
+      );
+    }
+  }
+
   // Step 1: Fetch existing locations
   onProgress?.(0, rows.length, 'Fetching existing locations...');
   const existingLocations = await fetchExistingLocations(userId);
 
   // Step 2: Build location paths from CSV
-  const locationPaths = buildLocationPaths(rows);
+  const locationPaths = buildLocationPaths(rows, prefixLocationName);
 
   // Step 3: Sort locations by depth (parents first)
   const sortedPaths = sortLocationsByDepth(locationPaths);
@@ -627,7 +847,7 @@ export async function bulkImport(
     }
 
     // Get location ID for the deepest level
-    const locationPath = getDeepestLocationPath(row);
+    const locationPath = getDeepestLocationPath(row, prefixLocationName);
     let locationId: number | undefined;
 
     if (locationPath) {
@@ -666,6 +886,27 @@ export async function bulkImport(
         : undefined;
 
       const device = await createDevice(row.device, locationId!, userId, companyId, templateInfo);
+
+      // Apply form_settings as device properties if provided
+      if (deviceSettings && Object.keys(deviceSettings).length > 0) {
+        try {
+          await updateDeviceProperties(device.id, device.properties, deviceSettings, userId);
+        } catch (err) {
+          // Warn but don't fail the device - it was created successfully
+          summary.results.push({
+            success: true,
+            row: row.rowNumber,
+            type: 'device',
+            action: 'created',
+            name: row.device.name || row.device.hardware_id,
+            id: device.id,
+            error: `Device created but settings failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          });
+          summary.devicesCreated++;
+          continue;
+        }
+      }
+
       summary.devicesCreated++;
       summary.results.push({
         success: true,
