@@ -1,13 +1,13 @@
 {
   "name": "mydevices-cli",
-  "version": "1.0.0",
+  "version": "1.2.3",
   "description": "CLI tool for managing myDevices IoT platform",
   "type": "module",
   "main": "src/index.ts",
   "bin": {
     "mydevices": "./src/index.ts"
   },
-  "scripts": {
+  "scripts": {  
     "start": "bun run src/index.ts",
     "build": "bun build src/index.ts --compile --outfile dist/mydevices",
     "dev": "bun --watch src/index.ts",
@@ -17,10 +17,9 @@
   "keywords": [
     "mydevices",
     "iot",
-    "cli",
-    "cayenne"
+    "cli"
   ],
-  "author": "",
+  "author": "myDevices, Inc.",
   "license": "MIT",
   "dependencies": {
     "@inquirer/prompts": "^8.0.2",
