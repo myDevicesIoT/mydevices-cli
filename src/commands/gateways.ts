@@ -597,5 +597,64 @@ export function createGatewaysCommands(): Command {
       }
     });
 
+  // --------------------------------------------------------------------------
+  // gateways migrate-provider
+  // --------------------------------------------------------------------------
+  gateways
+    .command('migrate-provider')
+    .description('Migrate a gateway to a different provider')
+    .argument('<hardware-id>', 'Gateway hardware ID (e.g., eui-647fdafffe01433c)')
+    .option('-p, --provider <provider>', 'Target provider (azure or mydevices)')
+    .option('-y, --yes', 'Skip confirmation prompt')
+    .option('--json', 'Output as JSON')
+    .action(async (hardwareId: string, options: GlobalOptions & { provider?: string; yes?: boolean }) => {
+      hardwareId = normalizeHardwareId(hardwareId);
+
+      let provider = options.provider;
+      if (!provider) {
+        provider = (await select({
+          message: 'Select target provider:',
+          choices: [
+            { name: 'azure', value: 'azure' },
+            { name: 'mydevices', value: 'mydevices' },
+          ],
+        })) as string;
+      }
+
+      if (provider !== 'azure' && provider !== 'mydevices') {
+        error(`Invalid provider "${provider}". Must be "azure" or "mydevices".`);
+        process.exit(1);
+      }
+
+      try {
+        if (!options.yes) {
+          const confirmed = await confirm({
+            message: `Are you sure you want to migrate gateway ${hardwareId} to provider "${provider}"?`,
+            default: false,
+          });
+          if (!confirmed) {
+            console.log('Migration cancelled.');
+            return;
+          }
+        }
+
+        const spinner = ora(`Migrating ${hardwareId} to provider "${provider}"...`).start();
+        const response = await apiPost<Record<string, unknown>>(
+          `${getGatewaysPath()}/${hardwareId}/migrate-provider`,
+          { provider }
+        );
+        spinner.stop();
+
+        if (options.json) {
+          output(response, { json: true });
+        } else {
+          success(`Gateway ${hardwareId} migrated to provider "${provider}"`);
+        }
+      } catch (err) {
+        error(err instanceof Error ? err.message : 'Failed to migrate gateway provider');
+        process.exit(1);
+      }
+    });
+
   return gateways;
 }

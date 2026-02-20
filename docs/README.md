@@ -4,6 +4,7 @@
 
 | Guide | Description |
 |-------|-------------|
+| [Bulk Import](./bulk-import.md) | Import locations and devices from CSV files |
 | [Device Templates](./device-templates.md) | Creating device integrations with templates and capabilities |
 | [Codecs](./codecs.md) | Writing and testing payload decoders/encoders |
 | [API Reference](./api-reference.md) | Complete API endpoints reference |
@@ -30,6 +31,7 @@ mydevices templates capabilities create <template-id> -n "Temperature" -c 500 --
 | Command | Description |
 |---------|-------------|
 | `auth` | Authentication (login, logout, token) |
+| `bulk` | Bulk import from CSV files |
 | `companies` | Company management |
 | `locations` | Location management |
 | `users` | User management |

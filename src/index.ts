@@ -14,6 +14,7 @@ import { createGatewaysCommands } from './commands/gateways.js';
 import { createCompletionCommands } from './commands/completion.js';
 import { createDescribeCommands } from './commands/describe.js';
 import { createVersionCommands } from './commands/version.js';
+import { createBulkCommands } from './commands/bulk.js';
 import { getCurrentVersion } from './lib/version.js';
 
 const program = new Command();
@@ -38,6 +39,7 @@ program.addCommand(createGatewaysCommands());
 program.addCommand(createCompletionCommands());
 program.addCommand(createDescribeCommands());
 program.addCommand(createVersionCommands());
+program.addCommand(createBulkCommands());
 
 // Parse and execute
 program.parse();
