@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { existsSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import chalk from 'chalk';
 import ora from 'ora';
 import { parseCSV, getDelimiterName } from '../lib/csv-parser.js';
@@ -24,10 +24,12 @@ import {
   extractFormSettings,
   promptFormSettings,
 } from '../lib/bulk-import.js';
+import { apiDelete } from '../lib/api.js';
+import { getConfig } from '../lib/config.js';
 import { error, success } from '../lib/output.js';
 
 export function createBulkCommands(): Command {
-  const bulk = new Command('bulk').description('Bulk operations for importing data');
+  const bulk = new Command('bulk').description('Bulk operations for importing and managing data');
 
   bulk
     .command('import')
@@ -275,6 +277,197 @@ export function createBulkCommands(): Command {
       } catch (err) {
         importSpinner.fail('Import failed');
         error(err instanceof Error ? err.message : 'Unknown error');
+        process.exit(1);
+      }
+    });
+
+  bulk
+    .command('deactivate')
+    .description('Deactivate (unpair) devices from a CSV file of hardware IDs (EUIs)')
+    .argument('<csv-file>', 'Path to CSV file containing hardware IDs')
+    .option('--column <name>', 'CSV column containing hardware IDs (auto-detected if not specified)')
+    .option('--delimiter <char>', 'Force CSV delimiter (auto-detect by default)')
+    .option('--dry-run', 'Show what would be deactivated without making changes')
+    .option('--json', 'Output results as JSON')
+    .option('--output <file>', 'Save detailed results to file')
+    .action(async (csvFile: string, options: {
+      column?: string;
+      delimiter?: string;
+      dryRun?: boolean;
+      json?: boolean;
+      output?: string;
+    }) => {
+      // Validate CSV file exists
+      if (!existsSync(csvFile)) {
+        error(`CSV file not found: ${csvFile}`);
+        process.exit(1);
+      }
+
+      // Parse CSV
+      const spinner = ora('Parsing CSV file...').start();
+      let headers: string[];
+      let rows: Record<string, string>[];
+
+      try {
+        // Try parsing as CSV first
+        const parsedCSV = parseCSV(csvFile, options.delimiter);
+        headers = parsedCSV.headers;
+        rows = parsedCSV.rows;
+        spinner.succeed(
+          `Parsed ${rows.length} rows with ${headers.length} columns ` +
+          `(delimiter: ${getDelimiterName(parsedCSV.delimiter)})`
+        );
+      } catch {
+        // Fall back to plain text (one EUI per line)
+        try {
+          const content = readFileSync(csvFile, 'utf-8');
+          const lines = content.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== '');
+          headers = ['hardware_id'];
+          rows = lines.map((line) => ({ hardware_id: line }));
+          spinner.succeed(`Parsed ${rows.length} hardware IDs from text file`);
+        } catch (err) {
+          spinner.fail('Failed to parse file');
+          error(err instanceof Error ? err.message : 'Unknown error');
+          process.exit(1);
+        }
+      }
+
+      // Determine which column has the hardware IDs
+      let euiColumn: string;
+      if (options.column) {
+        if (!headers.includes(options.column)) {
+          error(`Column "${options.column}" not found. Available columns: ${headers.join(', ')}`);
+          process.exit(1);
+        }
+        euiColumn = options.column;
+      } else {
+        // Auto-detect: look for common column names
+        const candidates = ['hardware_id', 'eui', 'deveui', 'dev_eui', 'device_eui', 'hwid'];
+        const match = headers.find((h) => candidates.includes(h.toLowerCase()));
+        if (match) {
+          euiColumn = match;
+        } else if (headers.length === 1) {
+          euiColumn = headers[0];
+        } else {
+          error(
+            `Could not auto-detect hardware ID column. Available columns: ${headers.join(', ')}\n` +
+            `Use --column <name> to specify which column contains hardware IDs.`
+          );
+          process.exit(1);
+        }
+      }
+
+      // Extract and validate EUIs
+      const euis = rows
+        .map((row) => row[euiColumn]?.trim())
+        .filter((eui) => eui && eui.length > 0);
+
+      if (euis.length === 0) {
+        error(`No hardware IDs found in column "${euiColumn}"`);
+        process.exit(1);
+      }
+
+      console.log(chalk.cyan(`\nFound ${euis.length} hardware IDs in column "${euiColumn}"`));
+
+      // Show preview
+      const preview = euis.slice(0, 5);
+      for (const eui of preview) {
+        console.log(chalk.gray(`  ${eui}`));
+      }
+      if (euis.length > 5) {
+        console.log(chalk.gray(`  ... and ${euis.length - 5} more`));
+      }
+
+      // Confirm
+      if (!options.dryRun) {
+        const { confirm } = await import('@inquirer/prompts');
+        const proceed = await confirm({
+          message: `Deactivate ${euis.length} devices?`,
+          default: false,
+        });
+
+        if (!proceed) {
+          console.log(chalk.yellow('Deactivation cancelled'));
+          process.exit(0);
+        }
+      }
+
+      // Deactivate devices
+      const clientId = getConfig('clientId');
+      const results: { eui: string; success: boolean; error?: string }[] = [];
+      let deactivated = 0;
+      let failed = 0;
+
+      const deactivateSpinner = ora(
+        options.dryRun ? 'Running dry-run validation...' : 'Deactivating devices...'
+      ).start();
+
+      for (let i = 0; i < euis.length; i++) {
+        const eui = euis[i];
+        deactivateSpinner.text = options.dryRun
+          ? `Dry run: ${i + 1}/${euis.length}`
+          : `Deactivating ${i + 1}/${euis.length} (${eui})`;
+
+        if (options.dryRun) {
+          results.push({ eui, success: true });
+          deactivated++;
+          continue;
+        }
+
+        try {
+          await apiDelete(
+            `/v1.1/organizations/${clientId}/applications/${clientId}/things/${eui}/unpair`
+          );
+          results.push({ eui, success: true });
+          deactivated++;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Unknown error';
+          results.push({ eui, success: false, error: message });
+          failed++;
+        }
+      }
+
+      deactivateSpinner.stop();
+
+      // Display summary
+      if (options.json) {
+        console.log(JSON.stringify({ deactivated, failed, results }, null, 2));
+      } else {
+        console.log();
+        console.log(chalk.cyan(options.dryRun ? 'Dry Run Complete' : 'Deactivation Complete'));
+        console.log(chalk.gray('─'.repeat(40)));
+        console.log(`Deactivated: ${chalk.green(String(deactivated))}`);
+        console.log(`Failed:      ${chalk.red(String(failed))}`);
+
+        // Show failures
+        const failures = results.filter((r) => !r.success);
+        if (failures.length > 0) {
+          console.log();
+          console.log(chalk.red('Failed devices:'));
+          for (const f of failures) {
+            console.log(`  ${f.eui} - ${f.error}`);
+          }
+        }
+
+        console.log(chalk.gray('─'.repeat(40)));
+      }
+
+      // Save results to file
+      if (options.output) {
+        const outputData = {
+          timestamp: new Date().toISOString(),
+          csvFile,
+          dryRun: options.dryRun || false,
+          summary: { deactivated, failed },
+          results,
+        };
+
+        writeFileSync(options.output, JSON.stringify(outputData, null, 2));
+        success(`Results saved to ${options.output}`);
+      }
+
+      // Exit with error code if there were failures
+      if (failed > 0) {
         process.exit(1);
       }
     });
