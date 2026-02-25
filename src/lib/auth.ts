@@ -76,15 +76,26 @@ export async function getValidToken(): Promise<string> {
   // Check if token is expired or will expire in the next minute
   const bufferTime = 60 * 1000; // 1 minute buffer
   if (auth.expiresAt && auth.expiresAt < Date.now() + bufferTime) {
-    // Try to refresh
+    // Try to refresh first
     if (auth.refreshToken) {
       try {
         const newTokens = await refreshAccessToken();
         return newTokens.access_token;
       } catch {
+        // Refresh failed, fall through to re-authenticate
+      }
+    }
+
+    // Re-authenticate using stored credentials
+    if (auth.clientId && auth.clientSecret && auth.realm) {
+      try {
+        const newTokens = await authenticate(auth.realm, auth.clientId, auth.clientSecret);
+        return newTokens.access_token;
+      } catch {
         throw new Error('Session expired. Run "mydevices auth login" to re-authenticate.');
       }
     }
+
     throw new Error('Session expired. Run "mydevices auth login" to re-authenticate.');
   }
 
