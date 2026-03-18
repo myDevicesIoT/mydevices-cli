@@ -110,6 +110,16 @@ export interface Device {
   updated_at?: string;
 }
 
+export interface DeviceMeta {
+  id: string;
+  thing_id: string;
+  name: string;
+  value: string;
+  type?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface SensorReading {
   channel: number;
   v: number | string;

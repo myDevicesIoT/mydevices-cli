@@ -3,7 +3,7 @@ import ora from 'ora';
 import { apiGet, apiPost, apiPut, apiDelete } from '../lib/api.js';
 import { getConfig } from '../lib/config.js';
 import { output, success, error, header, detail, outputTable } from '../lib/output.js';
-import type { Device, DeviceReading, ApiResponse, GlobalOptions, ListOptions } from '../types/index.js';
+import type { Device, DeviceMeta, DeviceReading, ApiResponse, GlobalOptions, ListOptions } from '../types/index.js';
 
 /**
  * Check if a string is a 16 hex character hardware ID (EUI format)
@@ -423,6 +423,124 @@ export function createDevicesCommands(): Command {
         process.exit(1);
       }
     });
+
+  // Metadata subcommands
+  const meta = new Command('meta').description('Manage device metadata entries');
+
+  meta
+    .command('list')
+    .description('List metadata for a device')
+    .argument('<thing-id>', 'Device ID')
+    .option('--json', 'Output as JSON')
+    .action(async (thingId: string, options: GlobalOptions) => {
+      const spinner = ora('Fetching metadata...').start();
+      try {
+        const response = await apiGet<DeviceMeta[]>(`/v1.0/admin/things/${thingId}/meta`);
+        spinner.stop();
+
+        const metas = Array.isArray(response) ? response : [];
+        output(metas, {
+          json: options.json,
+          tableHeaders: ['ID', 'Name', 'Value', 'Type'],
+          tableMapper: (m: DeviceMeta) => [m.id, m.name, m.value, m.type || 'string'],
+          footer: `Total: ${metas.length} metadata entries`,
+        });
+      } catch (err) {
+        spinner.stop();
+        error(err instanceof Error ? err.message : 'Failed to fetch metadata');
+        process.exit(1);
+      }
+    });
+
+  meta
+    .command('create')
+    .description('Create a metadata entry for a device')
+    .argument('<thing-id>', 'Device ID')
+    .requiredOption('-n, --name <name>', 'Metadata name')
+    .requiredOption('-v, --value <value>', 'Metadata value')
+    .option('-t, --type <type>', 'Metadata type', 'string')
+    .option('--json', 'Output as JSON')
+    .action(async (thingId: string, options: GlobalOptions & { name: string; value: string; type: string }) => {
+      const spinner = ora('Creating metadata...').start();
+      try {
+        const payload = {
+          name: options.name,
+          value: options.value,
+          type: options.type,
+        };
+
+        const result = await apiPost<DeviceMeta>(`/v1.0/admin/things/${thingId}/meta`, payload);
+        spinner.stop();
+
+        if (options.json) {
+          output(result, { json: true });
+        } else {
+          success('Metadata created successfully');
+          detail('ID', result.id);
+          detail('Name', result.name);
+          detail('Value', result.value);
+        }
+      } catch (err) {
+        spinner.stop();
+        error(err instanceof Error ? err.message : 'Failed to create metadata');
+        process.exit(1);
+      }
+    });
+
+  meta
+    .command('update')
+    .description('Update a metadata entry for a device')
+    .argument('<thing-id>', 'Device ID')
+    .argument('<meta-id>', 'Metadata ID')
+    .option('-n, --name <name>', 'Metadata name')
+    .option('-v, --value <value>', 'Metadata value')
+    .option('--json', 'Output as JSON')
+    .action(async (thingId: string, metaId: string, options: GlobalOptions & { name?: string; value?: string }) => {
+      if (!options.name && options.value === undefined) {
+        error('Provide --name or --value to update');
+        process.exit(1);
+      }
+
+      const spinner = ora('Updating metadata...').start();
+      try {
+        const payload: Record<string, string> = {};
+        if (options.name) payload.name = options.name;
+        if (options.value !== undefined) payload.value = options.value;
+
+        const result = await apiPut<DeviceMeta>(`/v1.0/admin/things/${thingId}/meta/${metaId}`, payload);
+        spinner.stop();
+
+        if (options.json) {
+          output(result, { json: true });
+        } else {
+          success('Metadata updated successfully');
+        }
+      } catch (err) {
+        spinner.stop();
+        error(err instanceof Error ? err.message : 'Failed to update metadata');
+        process.exit(1);
+      }
+    });
+
+  meta
+    .command('delete')
+    .description('Delete a metadata entry from a device')
+    .argument('<thing-id>', 'Device ID')
+    .argument('<meta-id>', 'Metadata ID')
+    .action(async (thingId: string, metaId: string) => {
+      const spinner = ora('Deleting metadata...').start();
+      try {
+        await apiDelete(`/v1.0/admin/things/${thingId}/meta/${metaId}`);
+        spinner.stop();
+        success('Metadata deleted successfully');
+      } catch (err) {
+        spinner.stop();
+        error(err instanceof Error ? err.message : 'Failed to delete metadata');
+        process.exit(1);
+      }
+    });
+
+  devices.addCommand(meta);
 
   return devices;
 }
