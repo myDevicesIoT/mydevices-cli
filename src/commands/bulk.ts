@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import { randomBytes } from 'crypto';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import chalk from 'chalk';
 import ora from 'ora';
@@ -469,6 +470,103 @@ export function createBulkCommands(): Command {
       // Exit with error code if there were failures
       if (failed > 0) {
         process.exit(1);
+      }
+    });
+
+  bulk
+    .command('generate-appkeys')
+    .description('Generate unique AppKeys for devices from a CSV file of DevEUIs')
+    .argument('<csv-file>', 'Path to CSV file containing DevEUIs')
+    .option('--appeui <eui>', 'AppEUI to use for all devices', '8000000000000334')
+    .option('--column <name>', 'CSV column containing DevEUIs (auto-detected if not specified)')
+    .option('--delimiter <char>', 'Force CSV delimiter (auto-detect by default)')
+    .option('--output <file>', 'Save output CSV to file (prints to stdout by default)')
+    .action(async (csvFile: string, options: {
+      appeui: string;
+      column?: string;
+      delimiter?: string;
+      output?: string;
+    }) => {
+      if (!existsSync(csvFile)) {
+        error(`CSV file not found: ${csvFile}`);
+        process.exit(1);
+      }
+
+      // Parse input file
+      let headers: string[];
+      let rows: Record<string, string>[];
+
+      try {
+        const parsedCSV = parseCSV(csvFile, options.delimiter);
+        headers = parsedCSV.headers;
+        rows = parsedCSV.rows;
+      } catch {
+        // Fall back to plain text (one EUI per line)
+        try {
+          const content = readFileSync(csvFile, 'utf-8');
+          const lines = content.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== '');
+          headers = ['deveui'];
+          rows = lines.map((line) => ({ deveui: line }));
+        } catch (err) {
+          error(err instanceof Error ? err.message : 'Failed to parse file');
+          process.exit(1);
+        }
+      }
+
+      // Determine which column has the DevEUIs
+      let euiColumn: string;
+      if (options.column) {
+        if (!headers.includes(options.column)) {
+          error(`Column "${options.column}" not found. Available columns: ${headers.join(', ')}`);
+          process.exit(1);
+        }
+        euiColumn = options.column;
+      } else {
+        const candidates = ['deveui', 'dev_eui', 'device_eui', 'eui', 'hardware_id'];
+        const match = headers.find((h) => candidates.includes(h.toLowerCase()));
+        if (match) {
+          euiColumn = match;
+        } else if (headers.length === 1) {
+          euiColumn = headers[0];
+        } else {
+          error(
+            `Could not auto-detect DevEUI column. Available columns: ${headers.join(', ')}\n` +
+            `Use --column <name> to specify which column contains DevEUIs.`
+          );
+          process.exit(1);
+        }
+      }
+
+      // Extract DevEUIs
+      const euis = rows
+        .map((row) => row[euiColumn]?.trim())
+        .filter((eui): eui is string => !!eui && eui.length > 0);
+
+      if (euis.length === 0) {
+        error(`No DevEUIs found in column "${euiColumn}"`);
+        process.exit(1);
+      }
+
+      // Generate unique AppKeys
+      const seenKeys = new Set<string>();
+      const outputLines: string[] = ['deveui,appeui,appkey'];
+
+      for (const deveui of euis) {
+        let appkey: string;
+        do {
+          appkey = randomBytes(16).toString('hex').toUpperCase();
+        } while (seenKeys.has(appkey));
+        seenKeys.add(appkey);
+        outputLines.push(`${deveui},${options.appeui},${appkey}`);
+      }
+
+      const outputCSV = outputLines.join('\n') + '\n';
+
+      if (options.output) {
+        writeFileSync(options.output, outputCSV);
+        success(`Generated AppKeys for ${euis.length} devices → ${options.output}`);
+      } else {
+        process.stdout.write(outputCSV);
       }
     });
 
