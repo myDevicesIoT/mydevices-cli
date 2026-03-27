@@ -25,7 +25,8 @@ function getIntegrationsPath(): string {
  * Get the base path for fuses (configured integration instances)
  */
 function getFusesPath(): string {
-  return `/v1.0/admin/proxy/cayenne/fuses`;
+  const clientId = getConfig('clientId');
+  return `/v1.1/organizations/${clientId}/applications/${clientId}/fuses`;
 }
 
 /**
