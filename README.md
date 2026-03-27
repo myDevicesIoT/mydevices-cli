@@ -145,6 +145,17 @@ mydevices rules list [--json]
 mydevices rules count
 ```
 
+### Bulk Operations
+
+```bash
+mydevices bulk import <csv-file> --company <id>       # Import locations & devices from CSV
+mydevices bulk deactivate <csv-file>                   # Deactivate devices from CSV of EUIs
+mydevices bulk generate-appkeys <csv-file>             # Generate unique AppKeys for DevEUIs
+mydevices bulk generate-appkeys <csv-file> --output keys.csv --appeui <eui>
+```
+
+See [Bulk Import Guide](./docs/bulk-import.md) and [Generate AppKeys Guide](./docs/generate-appkeys.md) for details.
+
 ## Output Formats
 
 All list commands support `--json` flag for machine-readable output:
