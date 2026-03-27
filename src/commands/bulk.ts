@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { randomBytes } from 'crypto';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { v1 as uuidv1 } from 'uuid';
 import chalk from 'chalk';
 import ora from 'ora';
 import { parseCSV, getDelimiterName } from '../lib/csv-parser.js';
@@ -565,6 +566,39 @@ export function createBulkCommands(): Command {
       if (options.output) {
         writeFileSync(options.output, outputCSV);
         success(`Generated AppKeys for ${euis.length} devices → ${options.output}`);
+      } else {
+        process.stdout.write(outputCSV);
+      }
+    });
+
+  bulk
+    .command('generate-uuids')
+    .description('Generate BLE beacon UUIDs (v1, 34-character truncated)')
+    .option('--count <number>', 'Number of UUIDs to generate', '10')
+    .option('--output <file>', 'Save output CSV to file (prints to stdout by default)')
+    .action(async (options: {
+      count: string;
+      output?: string;
+    }) => {
+      const count = parseInt(options.count, 10);
+      if (isNaN(count) || count < 1) {
+        error('Count must be a positive number');
+        process.exit(1);
+      }
+
+      const outputLines: string[] = ['uuid-34,uuidv1'];
+
+      for (let i = 0; i < count; i++) {
+        const guid = uuidv1();
+        const uuid34 = guid.substring(0, guid.length - 2);
+        outputLines.push(`${uuid34},${guid}`);
+      }
+
+      const outputCSV = outputLines.join('\n') + '\n';
+
+      if (options.output) {
+        writeFileSync(options.output, outputCSV);
+        success(`Generated ${count} UUIDs → ${options.output}`);
       } else {
         process.stdout.write(outputCSV);
       }

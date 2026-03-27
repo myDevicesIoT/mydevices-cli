@@ -7,7 +7,7 @@
   "bin": {
     "mydevices": "./src/index.ts"
   },
-  "scripts": {  
+  "scripts": {
     "start": "bun run src/index.ts",
     "build": "bun build src/index.ts --compile --outfile dist/mydevices",
     "dev": "bun --watch src/index.ts",
@@ -28,10 +28,12 @@
     "cli-table3": "^0.6.5",
     "commander": "^12.1.0",
     "conf": "^13.0.1",
-    "ora": "^8.1.0"
+    "ora": "^8.1.0",
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "@types/uuid": "^11.0.0",
     "typescript": "^5.0.0"
   }
 }

@@ -152,9 +152,11 @@ mydevices bulk import <csv-file> --company <id>       # Import locations & devic
 mydevices bulk deactivate <csv-file>                   # Deactivate devices from CSV of EUIs
 mydevices bulk generate-appkeys <csv-file>             # Generate unique AppKeys for DevEUIs
 mydevices bulk generate-appkeys <csv-file> --output keys.csv --appeui <eui>
+mydevices bulk generate-uuids --count 100              # Generate BLE beacon UUIDs
+mydevices bulk generate-uuids --count 50 --output beacons.csv
 ```
 
-See [Bulk Import Guide](./docs/bulk-import.md) and [Generate AppKeys Guide](./docs/generate-appkeys.md) for details.
+See [Bulk Import Guide](./docs/bulk-import.md), [Generate AppKeys Guide](./docs/generate-appkeys.md), and [Generate UUIDs Guide](./docs/generate-uuids.md) for details.
 
 ## Output Formats
 
