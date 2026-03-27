@@ -15,6 +15,7 @@ import { createCompletionCommands } from './commands/completion.js';
 import { createDescribeCommands } from './commands/describe.js';
 import { createVersionCommands } from './commands/version.js';
 import { createBulkCommands } from './commands/bulk.js';
+import { createIntegrationsCommands } from './commands/integrations.js';
 import { getCurrentVersion } from './lib/version.js';
 
 const program = new Command();
@@ -40,6 +41,7 @@ program.addCommand(createCompletionCommands());
 program.addCommand(createDescribeCommands());
 program.addCommand(createVersionCommands());
 program.addCommand(createBulkCommands());
+program.addCommand(createIntegrationsCommands());
 
 // Parse and execute
 program.parse();

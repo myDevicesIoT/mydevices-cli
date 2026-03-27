@@ -396,6 +396,63 @@ export interface EncodeResponse {
   session?: Record<string, unknown>;
 }
 
+// Integration types
+export interface IntegrationVariable {
+  name: string;
+  label: string;
+  description?: string;
+  is_required: number;
+  options?: string;
+  datatype: string;
+  order: number;
+  default_value?: string | null;
+  env_var?: string | null;
+}
+
+export interface Integration {
+  id: string;
+  name: string;
+  alias: string;
+  description?: string;
+  detail?: string;
+  documentation?: string;
+  docker_image?: string | null;
+  function_id?: string | null;
+  icon?: string;
+  active: number;
+  authentication: string;
+  type: string;
+  events: string;
+  required_fields?: string | null;
+  hidden_fields?: string | null;
+  variables?: IntegrationVariable[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface FuseSetting {
+  name: string;
+  value: string;
+}
+
+export interface Fuse {
+  id: string;
+  integration_id: string;
+  name: string;
+  active: number;
+  fields?: string;
+  application_id?: string;
+  account_id?: string;
+  auth_status?: string;
+  event_subscriptions?: string;
+  device_subscriptions?: string;
+  is_global?: number;
+  notification_contacts?: string;
+  settings?: FuseSetting[];
+  created_at?: string;
+  updated_at?: string;
+}
+
 // CLI options
 export interface GlobalOptions {
   json?: boolean;
