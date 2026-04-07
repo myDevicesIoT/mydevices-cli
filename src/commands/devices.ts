@@ -89,7 +89,7 @@ export function createDevicesCommands(): Command {
         if (options.hardwareId || isHardwareId(id)) {
           // First lookup the device by hardware ID to get the actual device ID
           const lookup = await apiGet<Device>(`/v1.0/admin/things/${id}/status`);
-          deviceId = lookup.id;
+          deviceId = lookup.cayenne_id!;
         }
 
         const device = await apiGet<Device>(`/v1.0/admin/things/${deviceId}`);
