@@ -1,8 +1,8 @@
 import { Command } from 'commander';
 import { input, password } from '@inquirer/prompts';
 import ora from 'ora';
-import { authenticate, getTokenExpiry } from '../lib/auth.js';
-import { getAuthConfig, clearAuthConfig, isAuthenticated, setConfig } from '../lib/config.js';
+import { authenticate, getTokenExpiry, decodeJwtExpiry } from '../lib/auth.js';
+import { getAuthConfig, clearAuthConfig, isAuthenticated, setConfig, setAuthConfig } from '../lib/config.js';
 import { success, error, detail, header } from '../lib/output.js';
 
 export function createAuthCommands(): Command {
@@ -120,6 +120,36 @@ export function createAuthCommands(): Command {
       }
 
       console.log(authConfig.accessToken);
+    });
+
+  auth
+    .command('set-token')
+    .description('Set an access token directly (e.g., a JWT obtained elsewhere)')
+    .argument('<token>', 'Access token to store')
+    .action((token: string) => {
+      const expiresAt = decodeJwtExpiry(token);
+
+      if (expiresAt !== null && expiresAt <= Date.now()) {
+        error('Token is already expired');
+        process.exit(1);
+      }
+
+      // Non-JWT or no exp claim: store with a far-future expiry so
+      // isAuthenticated() passes; the API will reject it if invalid.
+      const tenYearsMs = 10 * 365 * 24 * 60 * 60 * 1000;
+
+      setAuthConfig({
+        accessToken: token,
+        refreshToken: '',
+        expiresAt: expiresAt ?? Date.now() + tenYearsMs,
+      });
+
+      success('Access token saved!');
+      if (expiresAt !== null) {
+        detail('Expires', new Date(expiresAt).toLocaleString());
+      } else {
+        detail('Expires', 'unknown (could not read exp claim from token)');
+      }
     });
 
   return auth;
