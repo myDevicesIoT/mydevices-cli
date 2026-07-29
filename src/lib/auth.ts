@@ -121,3 +121,16 @@ export function getTokenExpiry(): { expiresAt: number; expiresIn: string } | nul
     expiresIn: `${hours}h ${minutes}m`,
   };
 }
+
+export function decodeJwtExpiry(token: string): number | null {
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    if (typeof payload.exp !== 'number') return null;
+    return payload.exp * 1000;
+  } catch {
+    return null;
+  }
+}
