@@ -26,9 +26,18 @@ import {
   extractFormSettings,
   promptFormSettings,
 } from '../lib/bulk-import.js';
-import { apiDelete } from '../lib/api.js';
+import { apiDelete, apiGet, apiPut } from '../lib/api.js';
 import { getConfig } from '../lib/config.js';
 import { error, success } from '../lib/output.js';
+import {
+  validateUpdateRows,
+  buildLocationIndex,
+  buildUpdatePlan,
+  type DeviceLite,
+  type LocationLite,
+  type PlanEntry,
+} from '../lib/bulk-update.js';
+import type { ApiResponse, Device } from '../types/index.js';
 
 export function createBulkCommands(): Command {
   const bulk = new Command('bulk').description('Bulk operations for importing and managing data');
@@ -279,6 +288,236 @@ export function createBulkCommands(): Command {
       } catch (err) {
         importSpinner.fail('Import failed');
         error(err instanceof Error ? err.message : 'Unknown error');
+        process.exit(1);
+      }
+    });
+
+  bulk
+    .command('update')
+    .description('Update devices (name, external ID, room) from a CSV file')
+    .argument('<csv-file>', 'CSV with a lookup column plus new_external_id / new_name / new_room columns')
+    .option('--lookup-by <field>', 'Device field to match rows on: external_id or hardware_id', 'external_id')
+    .option('--delimiter <char>', 'Force CSV delimiter (auto-detect by default)')
+    .option('--dry-run', 'Show the update plan without making changes')
+    .option('--json', 'Output results as JSON')
+    .option('--output <file>', 'Save detailed results to file')
+    .action(async (csvFile: string, options: {
+      lookupBy: string;
+      delimiter?: string;
+      dryRun?: boolean;
+      json?: boolean;
+      output?: string;
+    }) => {
+      if (!existsSync(csvFile)) {
+        error(`CSV file not found: ${csvFile}`);
+        process.exit(1);
+      }
+      if (options.lookupBy !== 'external_id' && options.lookupBy !== 'hardware_id') {
+        error(`Invalid --lookup-by "${options.lookupBy}". Use external_id or hardware_id.`);
+        process.exit(1);
+      }
+
+      // Parse CSV
+      const spinner = ora('Parsing CSV file...').start();
+      let parsedCSV;
+      try {
+        parsedCSV = parseCSV(csvFile, options.delimiter);
+        spinner.succeed(
+          `Parsed ${parsedCSV.rows.length} rows with ${parsedCSV.headers.length} columns ` +
+          `(delimiter: ${getDelimiterName(parsedCSV.delimiter)})`
+        );
+      } catch (err) {
+        spinner.fail('Failed to parse CSV');
+        error(err instanceof Error ? err.message : 'Unknown error');
+        process.exit(1);
+      }
+
+      if (!parsedCSV.headers.includes(options.lookupBy)) {
+        error(
+          `Lookup column "${options.lookupBy}" not found in CSV. ` +
+          `Available columns: ${parsedCSV.headers.join(', ')}`
+        );
+        process.exit(1);
+      }
+
+      // Validate rows — strict: any bad row aborts before we touch the API
+      const { valid: rows, errors: rowErrors } = validateUpdateRows(parsedCSV.rows, options.lookupBy);
+      if (rowErrors.length > 0) {
+        console.log();
+        for (const e of rowErrors) {
+          error(`Row ${e.rowNumber}: ${e.error}`);
+        }
+        process.exit(1);
+      }
+      if (rows.length === 0) {
+        error('No update rows found in CSV');
+        process.exit(1);
+      }
+
+      // Fetch all locations (only needed if any row moves rooms, but cheap enough to always index)
+      const locSpinner = ora('Fetching locations...').start();
+      const allLocations: LocationLite[] = [];
+      try {
+        let page = 0;
+        const limit = 100;
+        while (true) {
+          const response = await apiGet<{ count: number; rows: LocationLite[] }>(
+            '/v1.0/admin/locations',
+            { limit, page }
+          );
+          allLocations.push(...response.rows);
+          if (allLocations.length >= response.count || response.rows.length < limit) break;
+          page++;
+        }
+        locSpinner.succeed(`Fetched ${allLocations.length} locations`);
+      } catch (err) {
+        locSpinner.fail('Failed to fetch locations');
+        error(err instanceof Error ? err.message : 'Unknown error');
+        process.exit(1);
+      }
+      const locationIndex = buildLocationIndex(allLocations);
+
+      // Look up each device by the lookup field
+      const deviceMap = new Map<string, DeviceLite[]>();
+      const lookupValues = [...new Set(rows.map((r) => r.lookupValue))];
+      const devSpinner = ora('Looking up devices...').start();
+      try {
+        for (let i = 0; i < lookupValues.length; i++) {
+          const value = lookupValues[i];
+          devSpinner.text = `Looking up devices ${i + 1}/${lookupValues.length} (${value})`;
+          const response = await apiGet<ApiResponse<Device>>('/v1.0/admin/things', {
+            [options.lookupBy]: value,
+            limit: 5,
+          });
+          deviceMap.set(value, (response.rows || []) as unknown as DeviceLite[]);
+        }
+        devSpinner.succeed(`Looked up ${lookupValues.length} devices`);
+      } catch (err) {
+        devSpinner.fail('Device lookup failed');
+        error(err instanceof Error ? err.message : 'Unknown error');
+        process.exit(1);
+      }
+
+      // Build and display the plan
+      const plan = buildUpdatePlan(rows, deviceMap, locationIndex);
+      const ready = plan.filter((p) => p.status === 'ready');
+      const noops = plan.filter((p) => p.status === 'noop');
+      const planErrors = plan.filter((p) => p.status === 'error');
+
+      const describeChanges = (entry: PlanEntry): string => {
+        const parts: string[] = [];
+        if (entry.changes.thing_name !== undefined) {
+          parts.push(`name: ${entry.device?.thing_name} → ${entry.changes.thing_name}`);
+        }
+        if (entry.changes.external_id !== undefined) {
+          parts.push(`external_id: ${entry.device?.external_id ?? '(none)'} → ${entry.changes.external_id}`);
+        }
+        if (entry.changes.location_id !== undefined) {
+          const from = entry.device?.location_id
+            ? locationIndex.pathOf(Number(entry.device.location_id))
+            : '(none)';
+          parts.push(`room: ${from} → ${entry.targetRoomPath}`);
+        }
+        return parts.join(', ');
+      };
+
+      if (!options.json) {
+        console.log();
+        for (const entry of plan) {
+          if (entry.status === 'ready') {
+            console.log(`  ${chalk.green('✓')} Row ${entry.rowNumber} ${entry.lookupValue}: ${describeChanges(entry)}`);
+          } else if (entry.status === 'noop') {
+            console.log(chalk.gray(`  - Row ${entry.rowNumber} ${entry.lookupValue}: already up to date`));
+          } else {
+            console.log(`  ${chalk.red('✗')} Row ${entry.rowNumber} ${entry.lookupValue}: ${entry.error}`);
+          }
+        }
+        console.log();
+        console.log(chalk.cyan('Plan Summary'));
+        console.log(chalk.gray('─'.repeat(40)));
+        console.log(`To update:   ${chalk.green(String(ready.length))}`);
+        console.log(`Up to date:  ${chalk.blue(String(noops.length))}`);
+        console.log(`Errors:      ${chalk.red(String(planErrors.length))}`);
+        console.log(chalk.gray('─'.repeat(40)));
+      }
+
+      // Apply (unless dry run)
+      const results: { lookupValue: string; deviceId?: number | string; success: boolean; error?: string }[] = [];
+      let updated = 0;
+      let failed = 0;
+
+      if (!options.dryRun && ready.length > 0) {
+        const { confirm } = await import('@inquirer/prompts');
+        const proceed = await confirm({
+          message: `Apply ${ready.length} device updates?${planErrors.length > 0 ? ` (${planErrors.length} error rows will be skipped)` : ''}`,
+          default: false,
+        });
+        if (!proceed) {
+          console.log(chalk.yellow('Update cancelled'));
+          process.exit(0);
+        }
+
+        const applySpinner = ora('Applying updates...').start();
+        for (let i = 0; i < ready.length; i++) {
+          const entry = ready[i];
+          applySpinner.text = `Updating ${i + 1}/${ready.length} (${entry.lookupValue})`;
+          try {
+            await apiPut(`/v1.0/admin/things/${entry.device!.id}`, { ...entry.changes });
+            results.push({ lookupValue: entry.lookupValue, deviceId: entry.device!.id, success: true });
+            updated++;
+          } catch (err) {
+            const message = err instanceof Error ? err.message : 'Unknown error';
+            results.push({ lookupValue: entry.lookupValue, deviceId: entry.device!.id, success: false, error: message });
+            failed++;
+          }
+        }
+        applySpinner.stop();
+
+        if (!options.json) {
+          console.log();
+          console.log(chalk.cyan('Update Complete'));
+          console.log(chalk.gray('─'.repeat(40)));
+          console.log(`Updated: ${chalk.green(String(updated))}`);
+          console.log(`Failed:  ${chalk.red(String(failed))}`);
+          const failures = results.filter((r) => !r.success);
+          if (failures.length > 0) {
+            console.log();
+            console.log(chalk.red('Failed updates:'));
+            for (const f of failures) {
+              console.log(`  ${f.lookupValue} - ${f.error}`);
+            }
+          }
+          console.log(chalk.gray('─'.repeat(40)));
+        }
+      } else if (!options.json && options.dryRun) {
+        console.log(chalk.yellow('\nDry run — no changes applied'));
+      }
+
+      const outputData = {
+        timestamp: new Date().toISOString(),
+        csvFile,
+        dryRun: options.dryRun || false,
+        lookupBy: options.lookupBy,
+        summary: {
+          ready: ready.length,
+          upToDate: noops.length,
+          planErrors: planErrors.length,
+          updated,
+          failed,
+        },
+        plan,
+        results,
+      };
+
+      if (options.json) {
+        console.log(JSON.stringify(outputData, null, 2));
+      }
+      if (options.output) {
+        writeFileSync(options.output, JSON.stringify(outputData, null, 2));
+        success(`Results saved to ${options.output}`);
+      }
+
+      if (planErrors.length > 0 || failed > 0) {
         process.exit(1);
       }
     });

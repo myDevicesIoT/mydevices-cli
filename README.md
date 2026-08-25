@@ -149,6 +149,7 @@ mydevices rules count
 
 ```bash
 mydevices bulk import <csv-file> --company <id>       # Import locations & devices from CSV
+mydevices bulk update <csv-file> --dry-run             # Update device name/external ID/room from CSV
 mydevices bulk deactivate <csv-file>                   # Deactivate devices from CSV of EUIs
 mydevices bulk generate-appkeys <csv-file>             # Generate unique AppKeys for DevEUIs
 mydevices bulk generate-appkeys <csv-file> --output keys.csv --appeui <eui>
