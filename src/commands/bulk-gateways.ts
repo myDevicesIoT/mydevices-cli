@@ -123,13 +123,14 @@ async function runBulk(file: string, cmd: GatewayCommand, options: BulkGatewayOp
   }
 
   // Ctrl-C finishes the in-flight request, then stops and still reports/writes what was sent.
-  // A second Ctrl-C kills the process (the handler is registered once).
+  // A second Ctrl-C exits immediately.
   let interrupted = false;
   const onSigint = () => {
+    if (interrupted) process.exit(130);
     interrupted = true;
     warn('Interrupted: finishing the in-flight request, then stopping.');
   };
-  process.once('SIGINT', onSigint);
+  process.on('SIGINT', onSigint);
 
   const spinner = ora(`Sending ${label}...`).start();
   const results = await runBatch(euis, (eui) => sendGatewayCommand(eui, cmd), {
@@ -168,8 +169,14 @@ async function runBulk(file: string, cmd: GatewayCommand, options: BulkGatewayOp
   }
 
   if (options.output) {
-    writeResults(options.output, rows, RESULT_COLUMNS, { clientId, command: label, request_body: body, file });
-    success(`Results saved to ${options.output}`);
+    try {
+      writeResults(options.output, rows, RESULT_COLUMNS, { clientId, command: label, request_body: body, file });
+      success(`Results saved to ${options.output}`);
+    } catch (err) {
+      error(`Could not write ${options.output}: ${(err as Error).message}`);
+      console.error(JSON.stringify(rows, null, 2));
+      process.exit(interrupted ? 130 : 1);
+    }
   }
 
   if (interrupted) process.exit(130);

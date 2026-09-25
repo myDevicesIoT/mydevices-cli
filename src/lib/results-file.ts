@@ -1,5 +1,5 @@
-import { writeFileSync } from 'fs';
-import { extname } from 'path';
+import { existsSync, statSync, writeFileSync } from 'fs';
+import { dirname, extname } from 'path';
 
 export type ResultRow = Record<string, unknown>;
 
@@ -8,6 +8,10 @@ export function assertResultsPath(path: string): void {
   const ext = extname(path).toLowerCase();
   if (ext !== '.csv' && ext !== '.json') {
     throw new Error(`--output must end in .csv or .json (got "${path}")`);
+  }
+  const dir = dirname(path);
+  if (dir !== '.' && (!existsSync(dir) || !statSync(dir).isDirectory())) {
+    throw new Error(`--output directory does not exist: ${dir}`);
   }
 }
 

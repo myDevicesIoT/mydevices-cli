@@ -8,12 +8,23 @@ import { RESULT_COLUMNS } from './gateway-commands.js';
 
 describe('assertResultsPath', () => {
   test('accepts .csv and .json in any case', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'results-file-ext-'));
     expect(() => assertResultsPath('out.csv')).not.toThrow();
-    expect(() => assertResultsPath('dir/out.JSON')).not.toThrow();
+    expect(() => assertResultsPath(join(dir, 'out.JSON'))).not.toThrow();
   });
   test('rejects other extensions before any work is done', () => {
     expect(() => assertResultsPath('results.txt')).toThrow(/--output must end in .csv or .json/);
     expect(() => assertResultsPath('results')).toThrow(/--output must end in .csv or .json/);
+  });
+  test('rejects a path whose parent directory does not exist', () => {
+    expect(() => assertResultsPath('/tmp/no-such-dir/r.csv')).toThrow(/--output directory does not exist/);
+  });
+  test('accepts a path in an existing directory', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'results-file-path-'));
+    expect(() => assertResultsPath(join(dir, 'r.csv'))).not.toThrow();
+  });
+  test('accepts a bare filename (dirname ".")', () => {
+    expect(() => assertResultsPath('out.csv')).not.toThrow();
   });
 });
 
@@ -57,5 +68,8 @@ describe('writeResults', () => {
   });
   test('refuses an unsupported extension', () => {
     expect(() => writeResults(join(dir, 'r.txt'), [], ['a'])).toThrow(/--output must end/);
+  });
+  test('refuses a missing parent directory', () => {
+    expect(() => writeResults('/tmp/no-such-dir/r.csv', [], ['a'])).toThrow(/--output directory does not exist/);
   });
 });
