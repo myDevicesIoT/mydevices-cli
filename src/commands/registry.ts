@@ -2,39 +2,9 @@ import { Command } from 'commander';
 import ora from 'ora';
 import { apiGet, apiPost, apiDelete } from '../lib/api.js';
 import { getConfig } from '../lib/config.js';
+import { findRegistryEntry, getRegistryPath, type RegistryEntry } from '../lib/registry-lookup.js';
 import { output, success, error, header, detail, outputTable } from '../lib/output.js';
 import type { ApiResponse, GlobalOptions, ListOptions } from '../types/index.js';
-
-// ============================================================================
-// Types
-// ============================================================================
-
-interface RegistryDeviceType {
-  id: string;
-  name: string;
-  description?: string;
-  category: string;
-  subcategory: string;
-  codec?: string;
-  model?: string;
-  manufacturer?: string;
-  transport_protocol?: string;
-}
-
-interface RegistryEntry {
-  id: string;
-  application_id: string;
-  paired_to_app_id?: string;
-  hardware_id: string;
-  network: string;
-  device_type_id: string;
-  sku?: string;
-  status: 'PENDING' | 'PAIRED' | 'DECOMMISSIONED';
-  paired_at?: string;
-  created_at: string;
-  device_type?: RegistryDeviceType;
-  devices?: unknown[];
-}
 
 interface Network {
   id: string;
@@ -47,11 +17,6 @@ interface Network {
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-function getRegistryPath(): string {
-  const clientId = getConfig('clientId');
-  return `/v1.1/organizations/${clientId}/applications/${clientId}/things/registry`;
-}
 
 function getUnpairPath(hardwareId: string): string {
   const clientId = getConfig('clientId');
@@ -161,7 +126,10 @@ export function createRegistryCommands(): Command {
     .action(async (id: string, options: GlobalOptions) => {
       const spinner = ora('Fetching registry entry...').start();
       try {
-        const entry = await apiGet<RegistryEntry>(`${getRegistryPath()}/${id}`);
+        const entry = await findRegistryEntry(id);
+        if (!entry) {
+          throw new Error('Resource not found.');
+        }
         spinner.stop();
 
         if (options.json) {
