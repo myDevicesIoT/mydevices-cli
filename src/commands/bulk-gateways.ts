@@ -10,6 +10,7 @@ import {
   buildRequest,
   commandLabel,
   normalizeEuiList,
+  notSentRows,
   parseProvider,
   runBatch,
   sendGatewayCommand,
@@ -88,6 +89,9 @@ async function runBulk(file: string, cmd: GatewayCommand, options: BulkGatewayOp
     error(`${invalid.length} invalid gateway EUI(s) in ${file}; nothing was sent:`);
     for (const value of invalid.slice(0, 20)) console.error(`  ${value}`);
     if (invalid.length > 20) console.error(`  ... and ${invalid.length - 20} more`);
+    if (invalid.length === 1 && invalid[0] === ids[0]) {
+      console.error(`  (if "${invalid[0]}" is a column header, pass --column <name>)`);
+    }
     process.exit(1);
   }
 
@@ -95,17 +99,24 @@ async function runBulk(file: string, cmd: GatewayCommand, options: BulkGatewayOp
   const label = commandLabel(cmd);
   const { body } = buildRequest(clientId, euis[0], cmd);
 
-  console.log(chalk.cyan(
+  // With --json, stdout carries only the final JSON document (or, for --dry-run, the JSON
+  // plan below); every human-readable line here goes to stderr instead.
+  const emit = options.json ? console.error : console.log;
+  emit(chalk.cyan(
     `\n${label} → ${euis.length}${euis.length < all.length ? ` of ${all.length}` : ''} gateways as clientId "${clientId}"`
   ));
   const removed = readerDuplicates + duplicates;
-  if (removed > 0) console.log(chalk.gray(`  ${removed} duplicate EUI(s) removed`));
-  console.log(chalk.gray(`  Body: ${JSON.stringify(body)}`));
-  for (const eui of euis.slice(0, 5)) console.log(chalk.gray(`  ${eui}`));
-  if (euis.length > 5) console.log(chalk.gray(`  ... and ${euis.length - 5} more`));
+  if (removed > 0) emit(chalk.gray(`  ${removed} duplicate EUI(s) removed`));
+  emit(chalk.gray(`  Body: ${JSON.stringify(body)}`));
+  for (const eui of euis.slice(0, 5)) emit(chalk.gray(`  ${eui}`));
+  if (euis.length > 5) emit(chalk.gray(`  ... and ${euis.length - 5} more`));
 
   if (options.dryRun) {
-    console.log(chalk.yellow('\nDry run: nothing sent.'));
+    if (options.json) {
+      console.log(JSON.stringify({ clientId, command: label, request_body: body, dry_run: true, total: euis.length, euis }, null, 2));
+    } else {
+      console.log(chalk.yellow('\nDry run: nothing sent.'));
+    }
     return;
   }
 
@@ -123,12 +134,33 @@ async function runBulk(file: string, cmd: GatewayCommand, options: BulkGatewayOp
   }
 
   // Ctrl-C finishes the in-flight request, then stops and still reports/writes what was sent.
-  // A second Ctrl-C exits immediately.
+  // A second Ctrl-C writes what is known (attempted rows + not-sent rows) and exits immediately.
   let interrupted = false;
+  const attemptedResults: SendResult[] = [];
+  const dumpKnownResults = (): void => {
+    const combined = [...attemptedResults, ...notSentRows(euis, attemptedResults.length, label)];
+    const combinedRows = combined.map(withoutBody);
+    if (options.output) {
+      try {
+        writeResults(options.output, combinedRows, RESULT_COLUMNS, { clientId, command: label, request_body: body, file });
+        return;
+      } catch {
+        // fall through to the stderr dump below
+      }
+    }
+    console.error(JSON.stringify(combinedRows, null, 2));
+  };
   const onSigint = () => {
-    if (interrupted) process.exit(130);
+    if (interrupted) {
+      dumpKnownResults();
+      process.exit(130);
+    }
     interrupted = true;
-    warn('Interrupted: finishing the in-flight request, then stopping.');
+    if (options.json) {
+      console.error(chalk.yellow('⚠'), 'Interrupted: finishing the in-flight request, then stopping.');
+    } else {
+      warn('Interrupted: finishing the in-flight request, then stopping.');
+    }
   };
   process.on('SIGINT', onSigint);
 
@@ -139,11 +171,15 @@ async function runBulk(file: string, cmd: GatewayCommand, options: BulkGatewayOp
     onProgress: (index, total, eui) => {
       spinner.text = `Sending ${label} ${index + 1}/${total} (${eui})`;
     },
+    onResult: (result) => {
+      attemptedResults.push(result);
+    },
   });
   spinner.stop();
   process.removeListener('SIGINT', onSigint);
 
-  const rows = results.map(withoutBody);
+  const combinedResults = [...results, ...notSentRows(euis, results.length, label)];
+  const rows = combinedResults.map(withoutBody);
   const sent = results.filter((r) => r.ok).length;
   const failed = results.length - sent;
   const notSent = euis.length - results.length;
@@ -171,7 +207,11 @@ async function runBulk(file: string, cmd: GatewayCommand, options: BulkGatewayOp
   if (options.output) {
     try {
       writeResults(options.output, rows, RESULT_COLUMNS, { clientId, command: label, request_body: body, file });
-      success(`Results saved to ${options.output}`);
+      if (options.json) {
+        console.error(chalk.green('✓'), `Results saved to ${options.output}`);
+      } else {
+        success(`Results saved to ${options.output}`);
+      }
     } catch (err) {
       error(`Could not write ${options.output}: ${(err as Error).message}`);
       console.error(JSON.stringify(rows, null, 2));

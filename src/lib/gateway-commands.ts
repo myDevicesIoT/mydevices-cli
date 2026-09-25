@@ -32,6 +32,7 @@ export interface BatchOptions {
   sleep?: (ms: number) => Promise<void>;
   onProgress?: (index: number, total: number, eui: string) => void;
   shouldStop?: () => boolean;
+  onResult?: (result: SendResult) => void;
 }
 
 /** Columns of a bulk results CSV. `eui` first so a failures file is a valid re-run input. */
@@ -164,15 +165,19 @@ export async function runBatch(
     const eui = euis[i];
     opts.onProgress?.(i, euis.length, eui);
     try {
-      results.push(await send(eui));
+      const result = await send(eui);
+      results.push(result);
+      opts.onResult?.(result);
     } catch (err) {
-      results.push({
+      const result: SendResult = {
         eui,
         command: 'unknown',
         ok: false,
         error: err instanceof Error ? err.message : String(err),
         sent_at: new Date().toISOString(),
-      });
+      };
+      results.push(result);
+      opts.onResult?.(result);
     }
     if (i < euis.length - 1 && opts.delayMs > 0 && !opts.shouldStop?.()) {
       await sleep(opts.delayMs);
@@ -180,6 +185,20 @@ export async function runBatch(
   }
 
   return results;
+}
+
+/**
+ * Rows for the EUIs a run never attempted (e.g. stopped early by Ctrl-C), so `--output`
+ * and `--json` account for every EUI in the plan, not just the ones actually sent.
+ */
+export function notSentRows(euis: string[], attempted: number, command: string): SendResult[] {
+  return euis.slice(attempted).map((eui) => ({
+    eui,
+    command,
+    ok: false,
+    error: 'not sent (interrupted)',
+    sent_at: '',
+  }));
 }
 
 // ============================================================================

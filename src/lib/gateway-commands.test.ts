@@ -5,6 +5,7 @@ import {
   commandLabel,
   normalizeEui,
   normalizeEuiList,
+  notSentRows,
   parseProvider,
   runBatch,
   validateUpdate,
@@ -165,5 +166,37 @@ describe('runBatch', () => {
       shouldStop: () => stop,
     });
     expect(results.map((r) => r.eui)).toEqual(['a']);
+  });
+
+  test('calls onResult after each result is pushed, including the throwing-sender case', async () => {
+    const seen: SendResult[] = [];
+    const results = await runBatch(
+      ['a', 'b'],
+      async (eui) => {
+        if (eui === 'a') return ok(eui);
+        throw new Error('boom');
+      },
+      { delayMs: 0, onResult: (result) => seen.push(result) }
+    );
+    expect(seen).toEqual(results);
+    expect(seen.map((r) => r.eui)).toEqual(['a', 'b']);
+    expect(seen[1]).toMatchObject({ eui: 'b', ok: false, error: 'boom' });
+  });
+});
+
+describe('notSentRows', () => {
+  test('builds a not-sent row for each EUI past the attempted count', () => {
+    expect(notSentRows(['a', 'b', 'c'], 1, 'reboot')).toEqual([
+      { eui: 'b', command: 'reboot', ok: false, error: 'not sent (interrupted)', sent_at: '' },
+      { eui: 'c', command: 'reboot', ok: false, error: 'not sent (interrupted)', sent_at: '' },
+    ]);
+  });
+  test('returns nothing when every EUI was attempted', () => {
+    expect(notSentRows(['a', 'b'], 2, 'reboot')).toEqual([]);
+  });
+  test('returns everything when nothing was attempted', () => {
+    expect(notSentRows(['a'], 0, 'reboot')).toEqual([
+      { eui: 'a', command: 'reboot', ok: false, error: 'not sent (interrupted)', sent_at: '' },
+    ]);
   });
 });
