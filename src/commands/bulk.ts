@@ -6,6 +6,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { parseCSV, getDelimiterName } from '../lib/csv-parser.js';
 import { readIdList } from '../lib/eui-list.js';
+import { createBulkGatewaysCommand } from './bulk-gateways.js';
 import {
   interactiveMapping,
   loadMapping,
@@ -545,6 +546,8 @@ export function createBulkCommands(): Command {
         process.stdout.write(outputCSV);
       }
     });
+
+  bulk.addCommand(createBulkGatewaysCommand());
 
   return bulk;
 }
