@@ -18,7 +18,7 @@ Common options:
 | `--limit <n>` | all | send to the first n gateways only |
 | `--delay <ms>` | 500 | wait between gateways |
 | `-y, --yes` | | skip the confirmation prompt (required when not run from a terminal) |
-| `--json` | | print results as JSON |
+| `--json` | | print results as JSON; stdout carries only the JSON document — the preview and every other notice go to stderr. With `--dry-run`, stdout gets a JSON plan (`clientId`, `command`, `request_body`, `dry_run: true`, `total`, `euis`) instead of the results document |
 | `--output <file>` | | write per-gateway results, `.csv` or `.json` |
 
 ## Input file
@@ -31,7 +31,8 @@ valid gateway EUI, the command lists the bad lines and sends nothing.
 
 - Gateways are sent one at a time, in file order, with `--delay` between them.
 - A failure is recorded and the run continues. There are no retries.
-- `Ctrl-C` finishes the in-flight request, stops, prints the summary and writes `--output`; exit code 130. A second `Ctrl-C` exits immediately.
+- `Ctrl-C` finishes the in-flight request, stops, prints the summary and writes `--output`; exit code 130. Gateways that were never attempted are recorded too, as rows with `ok=false` and `error="not sent (interrupted)"` (`sent_at` empty, no `status_code`) — so `--output` always accounts for every EUI in the plan, and the retry recipe below picks them up along with the actual failures.
+- A second `Ctrl-C` does not wait: it writes what is known so far (attempted rows plus not-sent rows) — to `--output` if one was given, otherwise as JSON to stderr — then exits immediately with code 130.
 - `--output` is checked before anything is sent: it must end in `.csv` or `.json` and its directory must exist. If writing the file still fails at the end, the per-gateway results are printed to stderr as JSON so the record is not lost.
 - Exit code 1 if any gateway failed.
 

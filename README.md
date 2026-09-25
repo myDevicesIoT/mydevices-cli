@@ -144,6 +144,7 @@ mydevices devices status <hardware-id> # Lookup by hardware ID
 mydevices gateways list [--network iotinabox.chirpstackio]   # includes config/actual backend
 mydevices gateways get <eui>                                 # includes a Backend section
 mydevices gateways pings <eui> | stats <eui>
+# get/pings/stats also accept non-EUI gateway hardware IDs as-is (e.g. sim-13aa2-1768f-b009)
 mydevices gateways reboot <eui> [--yes]
 mydevices gateways update-software <eui> [--url <https-url> --checksum <md5>] [--yes]
 mydevices gateways migrate-provider <eui> --provider mydevices|azure [--yes]
