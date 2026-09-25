@@ -310,12 +310,20 @@ export function createRegistryCommands(): Command {
 
       if (options.write) {
         writeFileSync(options.write, shown.map((r) => r.hardware_id).join('\n') + (shown.length > 0 ? '\n' : ''));
-        success(`Wrote ${shown.length} IDs to ${options.write}`);
+        if (options.json) {
+          console.error(`✓ Wrote ${shown.length} IDs to ${options.write}`);
+        } else {
+          success(`Wrote ${shown.length} IDs to ${options.write}`);
+        }
       }
 
       if (options.output) {
         writeResults(options.output, shown.map((r) => ({ ...r })), LOOKUP_COLUMNS, { clientId, file, only: only ?? null, counts });
-        success(`Results saved to ${options.output}`);
+        if (options.json) {
+          console.error(`✓ Results saved to ${options.output}`);
+        } else {
+          success(`Results saved to ${options.output}`);
+        }
       }
 
       if (counts['ERROR']) {
