@@ -18,7 +18,7 @@ import {
   type RegistryEntry,
 } from '../lib/registry-lookup.js';
 import { readIdList } from '../lib/eui-list.js';
-import { assertResultsPath, writeResults } from '../lib/results-file.js';
+import { assertResultsPath, assertWritableDir, writeResults } from '../lib/results-file.js';
 import { output, success, error, header, detail, outputTable } from '../lib/output.js';
 import type { ApiResponse, GlobalOptions, ListOptions } from '../types/index.js';
 
@@ -253,6 +253,15 @@ export function createRegistryCommands(): Command {
       if (options.output) {
         try {
           assertResultsPath(options.output);
+        } catch (err) {
+          error((err as Error).message);
+          process.exit(1);
+        }
+      }
+
+      if (options.write) {
+        try {
+          assertWritableDir(options.write, '--write');
         } catch (err) {
           error((err as Error).message);
           process.exit(1);

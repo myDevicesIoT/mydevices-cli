@@ -3,16 +3,21 @@ import { dirname, extname } from 'path';
 
 export type ResultRow = Record<string, unknown>;
 
+/** Validate a path's parent directory up front, so a typo is caught before any work is done. */
+export function assertWritableDir(path: string, flag: string): void {
+  const dir = dirname(path);
+  if (dir !== '.' && (!existsSync(dir) || !statSync(dir).isDirectory())) {
+    throw new Error(`${flag} directory does not exist: ${dir}`);
+  }
+}
+
 /** Validate an --output path up front, so a typo is caught before anything is sent. */
 export function assertResultsPath(path: string): void {
   const ext = extname(path).toLowerCase();
   if (ext !== '.csv' && ext !== '.json') {
     throw new Error(`--output must end in .csv or .json (got "${path}")`);
   }
-  const dir = dirname(path);
-  if (dir !== '.' && (!existsSync(dir) || !statSync(dir).isDirectory())) {
-    throw new Error(`--output directory does not exist: ${dir}`);
-  }
+  assertWritableDir(path, '--output');
 }
 
 function csvCell(value: unknown): string {

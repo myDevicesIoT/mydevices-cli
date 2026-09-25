@@ -2,9 +2,22 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { assertResultsPath, toCsv, writeResults } from './results-file.js';
+import { assertResultsPath, assertWritableDir, toCsv, writeResults } from './results-file.js';
 import { parseIdList } from './eui-list.js';
 import { RESULT_COLUMNS } from './gateway-commands.js';
+
+describe('assertWritableDir', () => {
+  test('rejects a path whose parent directory does not exist, using the given flag name', () => {
+    expect(() => assertWritableDir('/tmp/no-such-dir/x.txt', '--write')).toThrow(/--write directory does not exist/);
+  });
+  test('accepts a path in an existing directory', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'writable-dir-'));
+    expect(() => assertWritableDir(join(dir, 'x.txt'), '--write')).not.toThrow();
+  });
+  test('accepts a bare filename (dirname ".")', () => {
+    expect(() => assertWritableDir('x.txt', '--write')).not.toThrow();
+  });
+});
 
 describe('assertResultsPath', () => {
   test('accepts .csv and .json in any case', () => {
