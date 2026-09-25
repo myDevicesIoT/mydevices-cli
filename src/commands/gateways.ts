@@ -144,6 +144,19 @@ function euiOrExit(id: string): string {
   }
 }
 
+/**
+ * Read-only lookups also need to reach the fleet's non-EUI gateway hardware IDs
+ * (e.g. Tektelic Kona Micro Cellular `sim-...` IDs), so normalize when possible
+ * and otherwise pass the trimmed ID through unchanged instead of rejecting it.
+ */
+function euiOrAsGiven(id: string): string {
+  try {
+    return normalizeEui(id);
+  } catch {
+    return id.trim();
+  }
+}
+
 function formatStatus(status: string): string {
   switch (status?.toUpperCase()) {
     case 'ACTIVATED':
@@ -249,7 +262,7 @@ export function createGatewaysCommands(): Command {
     .argument('<hardware-id>', 'Gateway hardware ID (e.g., eui-647fdafffe01433c)')
     .option('--json', 'Output as JSON')
     .action(async (hardwareId: string, options: GlobalOptions) => {
-      hardwareId = euiOrExit(hardwareId);
+      hardwareId = euiOrAsGiven(hardwareId);
       const spinner = ora('Fetching gateway...').start();
       try {
         const response = await apiGet<GatewayResponse>(`${getGatewaysPath()}/${hardwareId}`);
@@ -343,7 +356,7 @@ export function createGatewaysCommands(): Command {
       hours?: string;
       timezone?: string;
     }) => {
-      hardwareId = euiOrExit(hardwareId);
+      hardwareId = euiOrAsGiven(hardwareId);
       const spinner = ora('Fetching ping histogram...').start();
       try {
         let startTime: number;
@@ -424,7 +437,7 @@ export function createGatewaysCommands(): Command {
     .argument('<hardware-id>', 'Gateway hardware ID')
     .option('--json', 'Output as JSON')
     .action(async (hardwareId: string, options: GlobalOptions) => {
-      hardwareId = euiOrExit(hardwareId);
+      hardwareId = euiOrAsGiven(hardwareId);
       const spinner = ora('Fetching gateway stats...').start();
       try {
         const response = await apiGet<GatewayStatsResponse>(
