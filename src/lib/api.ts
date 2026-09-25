@@ -3,6 +3,17 @@ import { getConfig } from './config.js';
 import { getValidToken } from './auth.js';
 import chalk from 'chalk';
 
+/** An API error that keeps the HTTP status, so bulk results can report it. */
+export class ApiError extends Error {
+  readonly status?: number;
+
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 const isDebug = process.env.DEBUG === '1' || process.env.MYDEVICES_DEBUG === '1';
 
 let apiClient: AxiosInstance | null = null;
@@ -58,16 +69,17 @@ export function getApiClient(): AxiosInstance {
 
           switch (status) {
             case 401:
-              throw new Error('Authentication failed. Run "mydevices auth login" to re-authenticate.');
+              throw new ApiError('Authentication failed. Run "mydevices auth login" to re-authenticate.', status);
             case 403:
-              throw new Error('Permission denied. You do not have access to this resource.');
+              throw new ApiError('Permission denied. You do not have access to this resource.', status);
             case 404:
-              throw new Error('Resource not found.');
+              throw new ApiError('Resource not found.', status);
             default:
-              throw new Error(
+              throw new ApiError(
                 (data?.message as string) ||
                 (data?.error as string) ||
-                `API error: ${status}`
+                `API error: ${status}`,
+                status
               );
           }
         }
@@ -90,6 +102,15 @@ export async function apiPost<T>(path: string, data?: Record<string, unknown>): 
   const client = getApiClient();
   const response = await client.post<T>(path, data);
   return response.data;
+}
+
+export async function apiPostWithStatus<T>(
+  path: string,
+  data?: Record<string, unknown>
+): Promise<{ status: number; data: T }> {
+  const client = getApiClient();
+  const response = await client.post<T>(path, data);
+  return { status: response.status, data: response.data };
 }
 
 export async function apiPut<T>(path: string, data?: Record<string, unknown>): Promise<T> {
