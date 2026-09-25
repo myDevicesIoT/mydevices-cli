@@ -70,7 +70,10 @@ instead of being interpolated into the URL. The single-gateway `reboot`, `update
 - Values are trimmed and de-duplicated (first occurrence wins).
 - Validation is the caller's: gateway commands map through `normalizeEui`; registry lookup lowercases.
 
-`bulk deactivate` is refactored to use it (behavior unchanged apart from `#` lines being ignored).
+`bulk deactivate` is refactored to use it. Two behavior changes: `#` lines are ignored, and a plain-text
+file is no longer parsed as CSV — today its first EUI is taken as the header and silently skipped. A file is
+read as CSV only when `--column`/`--delimiter` is given, the first line contains a delimiter, or the first
+line is a known ID header; otherwise every line is an ID. Dedupe is case-insensitive.
 
 ### `src/lib/results-file.ts` (new)
 
