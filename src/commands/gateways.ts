@@ -1,11 +1,19 @@
 import { Command } from 'commander';
 import ora from 'ora';
 import { confirm, select } from '@inquirer/prompts';
-import { apiGet, apiPost } from '../lib/api.js';
+import { apiGet } from '../lib/api.js';
 import { getConfig } from '../lib/config.js';
 import { output, header, detail, success } from '../lib/output.js';
 import { error } from '../lib/output.js';
 import type { ApiResponse, GlobalOptions, ListOptions } from '../types/index.js';
+import {
+  normalizeEui,
+  parseProvider,
+  sendGatewayCommand,
+  validateUpdate,
+  type GatewayCommand,
+  type Provider,
+} from '../lib/gateway-commands.js';
 
 // ============================================================================
 // Types
@@ -125,8 +133,13 @@ function getGatewaysPath(): string {
   return `/v1.1/organizations/${clientId}/applications/${clientId}/gateways`;
 }
 
-function normalizeHardwareId(id: string): string {
-  return id.startsWith('eui-') ? id : `eui-${id}`;
+function euiOrExit(id: string): string {
+  try {
+    return normalizeEui(id);
+  } catch (err) {
+    error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
 }
 
 function formatStatus(status: string): string {
@@ -229,7 +242,7 @@ export function createGatewaysCommands(): Command {
     .argument('<hardware-id>', 'Gateway hardware ID (e.g., eui-647fdafffe01433c)')
     .option('--json', 'Output as JSON')
     .action(async (hardwareId: string, options: GlobalOptions) => {
-      hardwareId = normalizeHardwareId(hardwareId);
+      hardwareId = euiOrExit(hardwareId);
       const spinner = ora('Fetching gateway...').start();
       try {
         const response = await apiGet<GatewayResponse>(`${getGatewaysPath()}/${hardwareId}`);
@@ -297,7 +310,7 @@ export function createGatewaysCommands(): Command {
       hours?: string;
       timezone?: string;
     }) => {
-      hardwareId = normalizeHardwareId(hardwareId);
+      hardwareId = euiOrExit(hardwareId);
       const spinner = ora('Fetching ping histogram...').start();
       try {
         let startTime: number;
@@ -378,7 +391,7 @@ export function createGatewaysCommands(): Command {
     .argument('<hardware-id>', 'Gateway hardware ID')
     .option('--json', 'Output as JSON')
     .action(async (hardwareId: string, options: GlobalOptions) => {
-      hardwareId = normalizeHardwareId(hardwareId);
+      hardwareId = euiOrExit(hardwareId);
       const spinner = ora('Fetching gateway stats...').start();
       try {
         const response = await apiGet<GatewayStatsResponse>(
@@ -493,7 +506,7 @@ export function createGatewaysCommands(): Command {
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--json', 'Output as JSON')
     .action(async (hardwareId: string, options: GlobalOptions & { yes?: boolean }) => {
-      hardwareId = normalizeHardwareId(hardwareId);
+      hardwareId = euiOrExit(hardwareId);
       try {
         if (!options.yes) {
           const confirmed = await confirm({
@@ -507,14 +520,16 @@ export function createGatewaysCommands(): Command {
         }
 
         const spinner = ora(`Sending reboot command to ${hardwareId}...`).start();
-        const response = await apiPost<Record<string, unknown>>(
-          `${getGatewaysPath()}/${hardwareId}/commands`,
-          { command: 'reboot' }
-        );
+        const result = await sendGatewayCommand(hardwareId, { kind: 'reboot' });
         spinner.stop();
 
+        if (!result.ok) {
+          error(result.error ?? 'Failed to send reboot command');
+          process.exit(1);
+        }
+
         if (options.json) {
-          output(response, { json: true });
+          output(result.body, { json: true });
         } else {
           success(`Reboot command sent to gateway ${hardwareId}`);
         }
@@ -531,65 +546,84 @@ export function createGatewaysCommands(): Command {
     .command('update-software')
     .description('Update software on a gateway')
     .argument('<hardware-id>', 'Gateway hardware ID (e.g., eui-647fdafffe01433c)')
+    .option('--url <url>', 'https URL of the package to install (skips the manifest picker)')
+    .option('--checksum <md5>', 'MD5 checksum of the package (required with --url)')
+    .option('-y, --yes', 'Skip confirmation prompt')
     .option('--json', 'Output as JSON')
-    .action(async (hardwareId: string, options: GlobalOptions) => {
-      hardwareId = normalizeHardwareId(hardwareId);
+    .action(async (hardwareId: string, options: GlobalOptions & { url?: string; checksum?: string; yes?: boolean }) => {
+      hardwareId = euiOrExit(hardwareId);
+
+      if (options.checksum && !options.url) {
+        error('--checksum requires --url');
+        process.exit(1);
+      }
+      if (options.url && !options.checksum) {
+        error('--url requires --checksum');
+        process.exit(1);
+      }
+
       try {
-        const spinner = ora('Fetching available updates...').start();
-        const res = await fetch('https://docs.mydevices.com/artifacts/latest.json');
-        if (!res.ok) {
-          spinner.stop();
-          error(`Failed to fetch update manifest: ${res.statusText}`);
-          process.exit(1);
-        }
-        const manifest: ArtifactManifest = await res.json() as ArtifactManifest;
-        spinner.stop();
+        let cmd: GatewayCommand;
+        let summary: string;
 
-        // Build choices from manifest
-        const choices: { name: string; value: { gateway: string; software: string; artifact: SoftwareArtifact } }[] = [];
-        for (const [gateway, packages] of Object.entries(manifest)) {
-          for (const [software, artifact] of Object.entries(packages)) {
-            choices.push({
-              name: `${gateway} - ${software} ${artifact.version}`,
-              value: { gateway, software, artifact },
-            });
+        if (options.url && options.checksum) {
+          validateUpdate(options.url, options.checksum);
+          cmd = { kind: 'update', url: options.url, checksum: options.checksum };
+          summary = `${options.url} (md5 ${options.checksum})`;
+        } else {
+          const spinner = ora('Fetching available updates...').start();
+          const res = await fetch('https://docs.mydevices.com/artifacts/latest.json');
+          if (!res.ok) {
+            spinner.stop();
+            error(`Failed to fetch update manifest: ${res.statusText}`);
+            process.exit(1);
           }
+          const manifest: ArtifactManifest = await res.json() as ArtifactManifest;
+          spinner.stop();
+
+          const choices: { name: string; value: { gateway: string; software: string; artifact: SoftwareArtifact } }[] = [];
+          for (const [gateway, packages] of Object.entries(manifest)) {
+            for (const [software, artifact] of Object.entries(packages)) {
+              choices.push({
+                name: `${gateway} - ${software} ${artifact.version}`,
+                value: { gateway, software, artifact },
+              });
+            }
+          }
+
+          const selected = await select({
+            message: 'Select software to install:',
+            choices,
+          });
+          cmd = { kind: 'update', url: selected.artifact.url, checksum: selected.artifact.checksum };
+          summary = `${selected.software} ${selected.artifact.version} (${selected.gateway})`;
         }
 
-        const selected = await select({
-          message: 'Select software to install:',
-          choices,
-        });
-
-        const confirmed = await confirm({
-          message: `Update ${selected.software} ${selected.artifact.version} (${selected.gateway}) on ${hardwareId}?`,
-          default: false,
-        });
-
-        if (!confirmed) {
-          console.log('Update cancelled.');
-          return;
+        if (!options.yes) {
+          const confirmed = await confirm({
+            message: `Update ${hardwareId} with ${summary}?`,
+            default: false,
+          });
+          if (!confirmed) {
+            console.log('Update cancelled.');
+            return;
+          }
         }
 
         const updateSpinner = ora(`Sending update command to ${hardwareId}...`).start();
-        const response = await apiPost<Record<string, unknown>>(
-          `${getGatewaysPath()}/${hardwareId}/commands`,
-          {
-            command: 'update',
-            options: {
-              update_url: selected.artifact.url,
-              update_checksum: selected.artifact.checksum,
-            },
-          }
-        );
+        const result = await sendGatewayCommand(hardwareId, cmd);
         updateSpinner.stop();
 
+        if (!result.ok) {
+          error(result.error ?? 'Failed to send update command');
+          process.exit(1);
+        }
+
         if (options.json) {
-          output(response, { json: true });
+          output(result.body, { json: true });
         } else {
           success(`Update command sent to gateway ${hardwareId}`);
-          detail('Software', `${selected.software} ${selected.artifact.version}`);
-          detail('Gateway Type', selected.gateway);
+          detail('Package', summary);
         }
       } catch (err) {
         error(err instanceof Error ? err.message : 'Failed to send update command');
@@ -608,11 +642,11 @@ export function createGatewaysCommands(): Command {
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--json', 'Output as JSON')
     .action(async (hardwareId: string, options: GlobalOptions & { provider?: string; yes?: boolean }) => {
-      hardwareId = normalizeHardwareId(hardwareId);
+      hardwareId = euiOrExit(hardwareId);
 
-      let provider = options.provider;
-      if (!provider) {
-        provider = (await select({
+      let providerInput = options.provider;
+      if (!providerInput) {
+        providerInput = (await select({
           message: 'Select target provider:',
           choices: [
             { name: 'azure', value: 'azure' },
@@ -621,8 +655,11 @@ export function createGatewaysCommands(): Command {
         })) as string;
       }
 
-      if (provider !== 'azure' && provider !== 'mydevices') {
-        error(`Invalid provider "${provider}". Must be "azure" or "mydevices".`);
+      let provider: Provider;
+      try {
+        provider = parseProvider(providerInput);
+      } catch (err) {
+        error(err instanceof Error ? err.message : String(err));
         process.exit(1);
       }
 
@@ -639,14 +676,16 @@ export function createGatewaysCommands(): Command {
         }
 
         const spinner = ora(`Migrating ${hardwareId} to provider "${provider}"...`).start();
-        const response = await apiPost<Record<string, unknown>>(
-          `${getGatewaysPath()}/${hardwareId}/migrate-provider`,
-          { provider }
-        );
+        const result = await sendGatewayCommand(hardwareId, { kind: 'migrate-provider', provider });
         spinner.stop();
 
+        if (!result.ok) {
+          error(result.error ?? 'Failed to migrate gateway provider');
+          process.exit(1);
+        }
+
         if (options.json) {
-          output(response, { json: true });
+          output(result.body, { json: true });
         } else {
           success(`Gateway ${hardwareId} migrated to provider "${provider}"`);
         }
