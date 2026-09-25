@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import ora from 'ora';
+import chalk from 'chalk';
 import { confirm, select } from '@inquirer/prompts';
 import { apiGet } from '../lib/api.js';
 import { getConfig } from '../lib/config.js';
@@ -7,6 +8,7 @@ import { output, header, detail, success } from '../lib/output.js';
 import { error } from '../lib/output.js';
 import type { ApiResponse, GlobalOptions, ListOptions } from '../types/index.js';
 import {
+  attributesToMap,
   normalizeEui,
   parseProvider,
   sendGatewayCommand,
@@ -216,14 +218,19 @@ export function createGatewaysCommands(): Command {
         const gatewayList = response.rows || [];
         output(gatewayList, {
           json: options.json,
-          tableHeaders: ['Hardware ID', 'Status', 'Device Type', 'Network', 'Created'],
-          tableMapper: (g: GatewayListEntry) => [
-            g.hardware_id,
-            formatStatus(g.status),
-            g.device_type?.name || '-',
-            g.network || '-',
-            g.created_at ? new Date(g.created_at).toLocaleDateString() : '-',
-          ],
+          tableHeaders: ['Hardware ID', 'Status', 'Device Type', 'Network', 'Config Backend', 'Actual Backend', 'Created'],
+          tableMapper: (g: GatewayListEntry) => {
+            const attrs = attributesToMap(g.attributes);
+            return [
+              g.hardware_id,
+              formatStatus(g.status),
+              g.device_type?.name || '-',
+              g.network || '-',
+              attrs.config_backend || '-',
+              attrs.actual_backend || '-',
+              g.created_at ? new Date(g.created_at).toLocaleDateString() : '-',
+            ];
+          },
           footer: `Total: ${response.count || gatewayList.length} gateways`,
         });
       } catch (err) {
@@ -246,12 +253,26 @@ export function createGatewaysCommands(): Command {
       const spinner = ora('Fetching gateway...').start();
       try {
         const response = await apiGet<GatewayResponse>(`${getGatewaysPath()}/${hardwareId}`);
+
+        // Backends live in the list entry's attributes; the single-gateway endpoint omits them.
+        let attributes: Record<string, string> | null = null;
+        let backendLookupFailed = false;
+        try {
+          const lookup = await apiGet<ApiResponse<GatewayListEntry>>(getGatewaysPath(), {
+            filter: `hardware_id eq ${hardwareId}`,
+            limit: 5,
+          });
+          const row = (lookup.rows || []).find((g) => g.hardware_id === hardwareId);
+          attributes = row ? attributesToMap(row.attributes) : null;
+        } catch {
+          backendLookupFailed = true;
+        }
         spinner.stop();
 
         const gateway = response.gateway;
 
         if (options.json) {
-          output(response, { json: true });
+          output({ ...response, attributes }, { json: true });
         } else {
           header(`Gateway: ${gateway.hardware_id}`);
           detail('ID', gateway.id);
@@ -283,6 +304,18 @@ export function createGatewaysCommands(): Command {
             detail('ChirpStack Version', meta.chirpstack_version);
             detail('DPS Client Version', meta.dps_client_version);
             detail('Cert Expiration', meta.cert_expiration);
+          }
+
+          console.log('');
+          header('Backend');
+          if (attributes) {
+            detail('Config Backend', attributes.config_backend);
+            detail('Actual Backend', attributes.actual_backend);
+            detail('Config Endpoint', attributes.config_endpoint);
+          } else if (backendLookupFailed) {
+            console.log(chalk.gray('  backend lookup failed'));
+          } else {
+            console.log(chalk.gray(`  not visible to ${getConfig('clientId')}`));
           }
         }
       } catch (err) {
