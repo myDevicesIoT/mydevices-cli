@@ -120,7 +120,7 @@ mydevices registry lookup --template [file]      # default file: registry-lookup
 ```
 
 - Each ID (trimmed, lowercased, otherwise as given — sensors have no `eui-` prefix, gateways do) is looked up
-  with `GET …/things/registry?filter=hardware_id eq <id>&limit=1`. Read-only, `--concurrency` in flight.
+  with `GET …/things/registry?filter=hardware_id eq <id>&limit=5` (the exact hardware_id / id match is picked client-side, guarding against a loose `eq`). Read-only, `--concurrency` in flight.
 - Row: `hardware_id, status, device_type, paired_to_app_id, paired_at, network`. No match →
   `NOT-FOUND` ("not visible to this clientId", not a claim that the device does not exist). A request error
   → `ERROR` with the message; errors make the exit code 1.
@@ -144,7 +144,7 @@ mydevices registry lookup --template [file]      # default file: registry-lookup
 (verified 2026-09-25 as `dsi` against `eui-00800000d000f6e6` / `9b72d8e0-…`, which `registry list` returns).
 The list endpoint filters on either field, and its row carries everything `get` renders (device_type,
 devices, sku, paired_to_app_id). So `registry get` switches to
-`GET …/things/registry?filter=<id eq X | hardware_id eq X>&limit=1` — `id eq` when `<id>` is a UUID,
+`GET …/things/registry?filter=<id eq X | hardware_id eq X>&limit=5` (the exact hardware_id / id match is picked client-side, guarding against a loose `eq`) — `id eq` when `<id>` is a UUID,
 `hardware_id eq` (lowercased) otherwise — and renders that row with the existing formatter. No row → the
 existing "Resource not found" error. `registry lookup` shares the same lookup function.
 
@@ -152,11 +152,11 @@ existing "Resource not found" error. `registry lookup` shares the same lookup fu
 
 - `gateways list`: add `Config Backend` and `Actual Backend` columns from the list entry's `attributes`
   (`config_backend`, `actual_backend`; `-` when absent). `--json` unchanged (attributes are already there).
-- `gateways get`: one extra `GET …/gateways?filter=hardware_id eq <eui>&limit=1` after the main fetch. Adds a
+- `gateways get`: one extra `GET …/gateways?filter=hardware_id eq <eui>&limit=5` (the exact hardware_id / id match is picked client-side, guarding against a loose `eq`) after the main fetch. Adds a
   `Backend` section: Config Backend, Actual Backend, Config Endpoint. If the gateway is not visible to the
   list endpoint (another customer's gateway under a customer clientId), the section reads
   `not visible to <clientId>` and nothing else changes. If the extra call fails, the rest of the output
-  still prints. `--json` adds a top-level `attributes` object (`{name: value}`); existing keys unchanged.
+  still prints. `--json` adds a top-level `attributes` object (`{name: value}`); when the gateway is not visible or the extra call fails, `"attributes": null`. Existing keys unchanged.
 - `attributesToMap(attributes)` in `src/lib/gateway-commands.ts`, shared by list and get (and unit-tested there).
 
 ## Error handling

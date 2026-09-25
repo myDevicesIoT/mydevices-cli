@@ -29,8 +29,8 @@ const SUBCOMMANDS: Record<string, string[]> = {
   config: ['get', 'set', 'list', 'reset'],
   templates: ['list', 'get', 'create', 'update', 'delete', 'assign-codec', 'scaffold-decoder', 'datatypes', 'capabilities'],
   codecs: ['list', 'get', 'create', 'update', 'delete', 'decode', 'encode'],
-  registry: ['list', 'get', 'create', 'unpair', 'networks'],
-  gateways: ['list', 'get', 'pings', 'stats'],
+  registry: ['list', 'get', 'lookup', 'create', 'unpair', 'networks'],
+  gateways: ['list', 'get', 'pings', 'stats', 'reboot', 'update-software', 'migrate-provider'],
   completion: ['bash', 'zsh', 'fish'],
 };
 
