@@ -5,6 +5,7 @@ import { v1 as uuidv1 } from 'uuid';
 import chalk from 'chalk';
 import ora from 'ora';
 import { parseCSV, getDelimiterName } from '../lib/csv-parser.js';
+import { readIdList } from '../lib/eui-list.js';
 import {
   interactiveMapping,
   loadMapping,
@@ -299,73 +300,14 @@ export function createBulkCommands(): Command {
       json?: boolean;
       output?: string;
     }) => {
-      // Validate CSV file exists
-      if (!existsSync(csvFile)) {
-        error(`CSV file not found: ${csvFile}`);
-        process.exit(1);
-      }
-
-      // Parse CSV
-      const spinner = ora('Parsing CSV file...').start();
-      let headers: string[];
-      let rows: Record<string, string>[];
-
-      try {
-        // Try parsing as CSV first
-        const parsedCSV = parseCSV(csvFile, options.delimiter);
-        headers = parsedCSV.headers;
-        rows = parsedCSV.rows;
-        spinner.succeed(
-          `Parsed ${rows.length} rows with ${headers.length} columns ` +
-          `(delimiter: ${getDelimiterName(parsedCSV.delimiter)})`
-        );
-      } catch {
-        // Fall back to plain text (one EUI per line)
-        try {
-          const content = readFileSync(csvFile, 'utf-8');
-          const lines = content.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== '');
-          headers = ['hardware_id'];
-          rows = lines.map((line) => ({ hardware_id: line }));
-          spinner.succeed(`Parsed ${rows.length} hardware IDs from text file`);
-        } catch (err) {
-          spinner.fail('Failed to parse file');
-          error(err instanceof Error ? err.message : 'Unknown error');
-          process.exit(1);
-        }
-      }
-
-      // Determine which column has the hardware IDs
+      let euis: string[];
       let euiColumn: string;
-      if (options.column) {
-        if (!headers.includes(options.column)) {
-          error(`Column "${options.column}" not found. Available columns: ${headers.join(', ')}`);
-          process.exit(1);
-        }
-        euiColumn = options.column;
-      } else {
-        // Auto-detect: look for common column names
-        const candidates = ['hardware_id', 'eui', 'deveui', 'dev_eui', 'device_eui', 'hwid'];
-        const match = headers.find((h) => candidates.includes(h.toLowerCase()));
-        if (match) {
-          euiColumn = match;
-        } else if (headers.length === 1) {
-          euiColumn = headers[0];
-        } else {
-          error(
-            `Could not auto-detect hardware ID column. Available columns: ${headers.join(', ')}\n` +
-            `Use --column <name> to specify which column contains hardware IDs.`
-          );
-          process.exit(1);
-        }
-      }
-
-      // Extract and validate EUIs
-      const euis = rows
-        .map((row) => row[euiColumn]?.trim())
-        .filter((eui) => eui && eui.length > 0);
-
-      if (euis.length === 0) {
-        error(`No hardware IDs found in column "${euiColumn}"`);
+      try {
+        const list = readIdList(csvFile, { column: options.column, delimiter: options.delimiter });
+        euis = list.ids;
+        euiColumn = list.column;
+      } catch (err) {
+        error(err instanceof Error ? err.message : 'Failed to read file');
         process.exit(1);
       }
 
