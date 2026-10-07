@@ -1,40 +1,26 @@
+import { writeFileSync } from 'fs';
 import { Command } from 'commander';
 import ora from 'ora';
+import chalk from 'chalk';
 import { apiGet, apiPost, apiDelete } from '../lib/api.js';
 import { getConfig } from '../lib/config.js';
+import {
+  DEFAULT_TEMPLATE_FILE,
+  LOOKUP_COLUMNS,
+  LOOKUP_STATUSES,
+  countByStatus,
+  findRegistryEntry,
+  getRegistryPath,
+  lookupMany,
+  writeLookupTemplate,
+  type LookupResult,
+  type LookupStatus,
+  type RegistryEntry,
+} from '../lib/registry-lookup.js';
+import { readIdList } from '../lib/eui-list.js';
+import { assertResultsPath, assertWritableDir, writeResults } from '../lib/results-file.js';
 import { output, success, error, header, detail, outputTable } from '../lib/output.js';
 import type { ApiResponse, GlobalOptions, ListOptions } from '../types/index.js';
-
-// ============================================================================
-// Types
-// ============================================================================
-
-interface RegistryDeviceType {
-  id: string;
-  name: string;
-  description?: string;
-  category: string;
-  subcategory: string;
-  codec?: string;
-  model?: string;
-  manufacturer?: string;
-  transport_protocol?: string;
-}
-
-interface RegistryEntry {
-  id: string;
-  application_id: string;
-  paired_to_app_id?: string;
-  hardware_id: string;
-  network: string;
-  device_type_id: string;
-  sku?: string;
-  status: 'PENDING' | 'PAIRED' | 'DECOMMISSIONED';
-  paired_at?: string;
-  created_at: string;
-  device_type?: RegistryDeviceType;
-  devices?: unknown[];
-}
 
 interface Network {
   id: string;
@@ -47,11 +33,6 @@ interface Network {
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-function getRegistryPath(): string {
-  const clientId = getConfig('clientId');
-  return `/v1.1/organizations/${clientId}/applications/${clientId}/things/registry`;
-}
 
 function getUnpairPath(hardwareId: string): string {
   const clientId = getConfig('clientId');
@@ -161,7 +142,10 @@ export function createRegistryCommands(): Command {
     .action(async (id: string, options: GlobalOptions) => {
       const spinner = ora('Fetching registry entry...').start();
       try {
-        const entry = await apiGet<RegistryEntry>(`${getRegistryPath()}/${id}`);
+        const entry = await findRegistryEntry(id);
+        if (!entry) {
+          throw new Error('Resource not found.');
+        }
         spinner.stop();
 
         if (options.json) {
@@ -198,6 +182,160 @@ export function createRegistryCommands(): Command {
       } catch (err) {
         spinner.stop();
         error(err instanceof Error ? err.message : 'Failed to fetch registry entry');
+        process.exit(1);
+      }
+    });
+
+  // --------------------------------------------------------------------------
+  // registry lookup
+  // --------------------------------------------------------------------------
+  registry
+    .command('lookup')
+    .description('Look up registry status for a file of hardware IDs (sensors or gateways)')
+    .argument('[file]', 'CSV or text file of hardware IDs')
+    .option('--template [file]', `Write a starter input file and exit (default: ${DEFAULT_TEMPLATE_FILE})`)
+    .option('--column <name>', 'CSV column containing hardware IDs (auto-detected if not specified)')
+    .option('--delimiter <char>', 'Force CSV delimiter (auto-detect by default)')
+    .option('--only <status>', `Only show and write rows with this status (${LOOKUP_STATUSES.join(', ')})`)
+    .option('--write <file>', 'Write the (filtered) hardware IDs to a file, one per line')
+    .option('--concurrency <n>', 'Lookups in flight (1-20)', '5')
+    .option('--json', 'Output as JSON')
+    .option('--output <file>', 'Save results (.csv or .json)')
+    .action(async (file: string | undefined, options: {
+      template?: string | boolean;
+      column?: string;
+      delimiter?: string;
+      only?: string;
+      write?: string;
+      concurrency: string;
+      json?: boolean;
+      output?: string;
+    }) => {
+      if (options.template !== undefined) {
+        const path = typeof options.template === 'string' ? options.template : DEFAULT_TEMPLATE_FILE;
+        try {
+          writeLookupTemplate(path);
+        } catch (err) {
+          error(err instanceof Error ? err.message : String(err));
+          process.exit(1);
+        }
+        success(`Template written to ${path}. Add one ID per line under hardware_id, then run: mydevices registry lookup ${path}`);
+        return;
+      }
+
+      if (!file) {
+        error('Missing <file>. Pass a file of hardware IDs, or use --template to create one.');
+        process.exit(1);
+      }
+
+      const clientId = getConfig('clientId');
+      if (!clientId) {
+        error('No clientId configured. Run "mydevices auth login" first.');
+        process.exit(1);
+      }
+
+      let only: LookupStatus | undefined;
+      if (options.only) {
+        const value = options.only.toUpperCase();
+        if (!LOOKUP_STATUSES.includes(value as LookupStatus)) {
+          error(`--only must be one of: ${LOOKUP_STATUSES.join(', ')}`);
+          process.exit(1);
+        }
+        only = value as LookupStatus;
+      }
+
+      if (!/^\d+$/.test(options.concurrency) || +options.concurrency < 1 || +options.concurrency > 20) {
+        error(`--concurrency must be an integer from 1 to 20 (got "${options.concurrency}")`);
+        process.exit(1);
+      }
+      const concurrency = parseInt(options.concurrency, 10);
+
+      if (options.output) {
+        try {
+          assertResultsPath(options.output);
+        } catch (err) {
+          error((err as Error).message);
+          process.exit(1);
+        }
+      }
+
+      if (options.write) {
+        try {
+          assertWritableDir(options.write, '--write');
+        } catch (err) {
+          error((err as Error).message);
+          process.exit(1);
+        }
+      }
+
+      let ids: string[];
+      try {
+        ids = readIdList(file, { column: options.column, delimiter: options.delimiter }).ids;
+      } catch (err) {
+        error(err instanceof Error ? err.message : 'Failed to read file');
+        process.exit(1);
+      }
+
+      if (!options.json) {
+        console.log(chalk.cyan(`Looking up ${ids.length} IDs in the registry as clientId "${clientId}"`));
+      }
+      const spinner = ora('Looking up...').start();
+      const results = await lookupMany(ids, {
+        concurrency,
+        onProgress: (done, total) => {
+          spinner.text = `Looking up ${done}/${total}`;
+        },
+      });
+      spinner.stop();
+
+      const counts = countByStatus(results);
+      const shown: LookupResult[] = only ? results.filter((r) => r.status === only) : results;
+
+      if (options.json) {
+        console.log(JSON.stringify({ clientId, counts, results: shown }, null, 2));
+      } else {
+        outputTable(
+          ['Hardware ID', 'Status', 'Device Type', 'Paired To', 'Paired At', 'Network'],
+          shown.map((r) => [
+            r.hardware_id,
+            r.status,
+            r.device_type || '-',
+            r.paired_to_app_id || '-',
+            r.paired_at || '-',
+            r.network || '-',
+          ]),
+          {
+            footer:
+              Object.entries(counts).map(([status, n]) => `${status}: ${n}`).join('  ') +
+              (only ? `  (showing ${only})` : '') +
+              (counts['NOT-FOUND'] ? `\nNOT-FOUND = not visible to clientId "${clientId}"` : ''),
+          }
+        );
+        const errors = results.filter((r) => r.status === 'ERROR');
+        for (const r of errors) {
+          console.log(chalk.red(`  ${r.hardware_id}: ${r.error}`));
+        }
+      }
+
+      if (options.write) {
+        writeFileSync(options.write, shown.map((r) => r.hardware_id).join('\n') + (shown.length > 0 ? '\n' : ''));
+        if (options.json) {
+          console.error(`✓ Wrote ${shown.length} IDs to ${options.write}`);
+        } else {
+          success(`Wrote ${shown.length} IDs to ${options.write}`);
+        }
+      }
+
+      if (options.output) {
+        writeResults(options.output, shown.map((r) => ({ ...r })), LOOKUP_COLUMNS, { clientId, file, only: only ?? null, counts });
+        if (options.json) {
+          console.error(`✓ Results saved to ${options.output}`);
+        } else {
+          success(`Results saved to ${options.output}`);
+        }
+      }
+
+      if (counts['ERROR']) {
         process.exit(1);
       }
     });

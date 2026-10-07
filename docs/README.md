@@ -9,6 +9,8 @@
 | [Codecs](./codecs.md) | Writing and testing payload decoders/encoders |
 | [API Reference](./api-reference.md) | Complete API endpoints reference |
 | [LLM Integration](./llm-integration.md) | MCP server setup and command schema for AI assistants |
+| [Bulk gateway commands](./bulk-gateways.md) | Send commands to multiple gateways from a file |
+| [Registry lookup](./registry-lookup.md) | Check registry status of many sensors or gateways |
 
 ## Quick Start
 

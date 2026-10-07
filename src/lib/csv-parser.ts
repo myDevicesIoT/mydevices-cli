@@ -59,10 +59,9 @@ function parseCSVLine(line: string, delimiter: string): string[] {
 }
 
 /**
- * Parse a CSV file and return structured data
+ * Parse CSV text and return structured data
  */
-export function parseCSV(filePath: string, forcedDelimiter?: string): ParsedCSV {
-  const content = readFileSync(filePath, 'utf-8');
+export function parseCSVContent(content: string, forcedDelimiter?: string): ParsedCSV {
   const lines = content.split(/\r?\n/).filter((line) => line.trim() !== '');
 
   if (lines.length === 0) {
@@ -90,6 +89,13 @@ export function parseCSV(filePath: string, forcedDelimiter?: string): ParsedCSV 
   }
 
   return { headers, rows, delimiter };
+}
+
+/**
+ * Parse a CSV file and return structured data
+ */
+export function parseCSV(filePath: string, forcedDelimiter?: string): ParsedCSV {
+  return parseCSVContent(readFileSync(filePath, 'utf-8'), forcedDelimiter);
 }
 
 /**

@@ -138,12 +138,34 @@ mydevices devices cmd <id> --channel 1 --value 100  # Send command
 mydevices devices status <hardware-id> # Lookup by hardware ID
 ```
 
+### Gateways
+
+```bash
+mydevices gateways list [--network iotinabox.chirpstackio]   # includes config/actual backend
+mydevices gateways get <eui>                                 # includes a Backend section
+mydevices gateways pings <eui> | stats <eui>
+# get/pings/stats also accept non-EUI gateway hardware IDs as-is (e.g. sim-13aa2-1768f-b009)
+mydevices gateways reboot <eui> [--yes]
+mydevices gateways update-software <eui> [--url <https-url> --checksum <md5>] [--yes]
+mydevices gateways migrate-provider <eui> --provider mydevices|azure [--yes]
+```
+
 ### Rules
 
 ```bash
 mydevices rules list [--json]
 mydevices rules count
 ```
+
+### Registry
+
+```bash
+mydevices registry get <uuid-or-hardware-id>
+mydevices registry lookup --template
+mydevices registry lookup <file> [--only PAIRED] [--write ids.txt] [--output lookup.csv]
+```
+
+See [Registry Lookup Guide](./docs/registry-lookup.md) for details.
 
 ### Bulk Operations
 
@@ -155,9 +177,12 @@ mydevices bulk generate-appkeys <csv-file>             # Generate unique AppKeys
 mydevices bulk generate-appkeys <csv-file> --output keys.csv --appeui <eui>
 mydevices bulk generate-uuids --count 100              # Generate BLE beacon UUIDs
 mydevices bulk generate-uuids --count 50 --output beacons.csv
+mydevices bulk gateways reboot <file> [--dry-run]      # Reboot a list of gateways
+mydevices bulk gateways update <file> --url <u> --checksum <md5>
+mydevices bulk gateways migrate-provider <file> --provider mydevices
 ```
 
-See [Bulk Import Guide](./docs/bulk-import.md), [Generate AppKeys Guide](./docs/generate-appkeys.md), and [Generate UUIDs Guide](./docs/generate-uuids.md) for details.
+See [Bulk Import Guide](./docs/bulk-import.md), [Generate AppKeys Guide](./docs/generate-appkeys.md), [Generate UUIDs Guide](./docs/generate-uuids.md), and [Bulk Gateway Commands](./docs/bulk-gateways.md) for details.
 
 ## Output Formats
 
